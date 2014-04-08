@@ -101,8 +101,16 @@ JalapenoHelper.prototype = {
                     0, 'flv',
                     1, 'mp4'
                 ]
+			},
+			3240: {
+                name: 'Rich Text',
+                description: 'Text',
+                getDefaultPlayerData: function () {
+                    return '<Player player="3430" label="Rich text"><Data/></Player>';
+                },
+                icon: self.getIcon('qr')
             },
-            3430: {
+			3430: {
                 name: 'QR Component',
                 description: 'QR code for mobile device integration',
                 getDefaultPlayerData: function () {
