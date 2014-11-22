@@ -5,8 +5,8 @@
  @constructor
  @return {Object} instantiated AppRouter
  **/
-define(['underscore', 'jquery', 'backbone', 'AppAuth', 'NavigationView', 'AppEntryFaderView', 'LoginView', 'AppContentFaderView', 'WaitView', 'bootbox', 'CampaignManagerView', 'ResourcesView', 'ResourcesView', 'StationsView', 'SettingsView', 'ProStudioView', 'HelpView', 'LogoutView', 'CampaignSliderStackView', 'ScreenLayoutSelectorView', 'X2JS', 'XDate'],
-    function (_, $, Backbone, AppAuth, NavigationView, AppEntryFaderView, LoginView, AppContentFaderView, WaitView, Bootbox, CampaignManagerView, ResourcesView, ResourcesView, StationsView, SettingsView, ProStudioView, HelpView, LogoutView, CampaignSliderStackView, ScreenLayoutSelectorView, X2JS, XDate) {
+define(['underscore', 'jquery', 'backbone', 'AppAuth', 'NavigationView', 'AppEntryFaderView', 'LoginView', 'AppContentFaderView', 'WaitView', 'LivePreView', 'bootbox', 'CampaignManagerView', 'ResourcesLoaderView', 'ResourcesLoaderView', 'StationsViewLoader', 'SettingsView', 'ProStudioView', 'HelpView', 'InstallView', 'LogoutView', 'CampaignSliderStackView', 'ScreenLayoutSelectorView', 'X2JS', 'XDate', 'LanguageSelectorView', 'ScenesLoaderView', 'DashboardView'],
+    function (_, $, Backbone, AppAuth, NavigationView, AppEntryFaderView, LoginView, AppContentFaderView, WaitView, LivePreView, Bootbox, CampaignManagerView, ResourcesLoaderView, ResourcesLoaderView, StationsViewLoader, SettingsView, ProStudioView, HelpView, InstallView, LogoutView, CampaignSliderStackView, ScreenLayoutSelectorView, X2JS, XDate, LanguageSelectorView, ScenesLoaderView, DashboardView) {
 
         BB.SERVICES.LAYOUT_ROUTER = 'LayoutRouter';
 
@@ -25,13 +25,20 @@ define(['underscore', 'jquery', 'backbone', 'AppAuth', 'NavigationView', 'AppEnt
              @method initialize
              **/
             initialize: function () {
+                var self = this;
+                BB.comBroker.setService(BB.SERVICES['LAYOUT_ROUTER'], self);
 
-                BB.comBroker.setService('compX2JS', new X2JS({escapeMode: true, attributePrefix: "_", arrayAccessForm: "none", emptyNodeForm: "text", enableToStringFunc: true, arrayAccessFormPaths: [], skipEmptyTextNodesForObj: true}));
+                // global x2j required by pepper
+                window.x2js = new X2JS({escapeMode: true, attributePrefix: "_", arrayAccessForm: "none", emptyNodeForm: "text", enableToStringFunc: true, arrayAccessFormPaths: [], skipEmptyTextNodesForObj: true});
+                BB.comBroker.setService('compX2JS', window.x2js);
                 BB.comBroker.setService('XDATE', new XDate());
 
-                this._initLoginPage();
-                this._listenSizeChanges();
+                self._initLoginPage();
+                self._listenLogoHover();
+                self._listenSizeChanges();
+
                 $(window).trigger('resize');
+                $('[data-toggle="tooltip"]').tooltip({'placement': 'bottom', 'delay': 1000});
             },
 
             /**
@@ -87,11 +94,11 @@ define(['underscore', 'jquery', 'backbone', 'AppAuth', 'NavigationView', 'AppEnt
              **/
             _routeAuthenticationFailed: function () {
                 Bootbox.dialog({
-                    message: "Sorry but the user or password did not match",
-                    title: "Problem",
+                    message: $(Elements.MSG_BOOTBOX_WRONG_USER_PASS).text(),
+                    title: $(Elements.MSG_BOOTBOX_PROBLEM).text(),
                     buttons: {
                         danger: {
-                            label: "OK",
+                            label: $(Elements.MSG_BOOTBOX_OK).text(),
                             className: "btn-danger",
                             callback: function () {
                             }
@@ -113,6 +120,10 @@ define(['underscore', 'jquery', 'backbone', 'AppAuth', 'NavigationView', 'AppEnt
                     this._initCampaignWizardPage();
                     this._initModal();
                     this._initDashBoard();
+                    this._initCustomer();
+
+                    // inject pseudo scene / player IDs
+                    pepper.injectPseudoScenePlayersIDs();
                 } else {
                     this.navigate('unauthenticated', {trigger: true});
                 }
@@ -127,6 +138,7 @@ define(['underscore', 'jquery', 'backbone', 'AppAuth', 'NavigationView', 'AppEnt
              @method _initLoginPage
              **/
             _initLoginPage: function () {
+
                 this.m_appAuth = new AppAuth();
 
                 this.m_appEntryFaderView = new AppEntryFaderView({
@@ -143,6 +155,10 @@ define(['underscore', 'jquery', 'backbone', 'AppAuth', 'NavigationView', 'AppEnt
                     el: Elements.APP_LOGIN
                 });
 
+                this.m_livePreview = new LivePreView({
+                    el: Elements.LIVE_PREVIEW
+                });
+
                 this.m_mainAppWaitView = new WaitView({
                     el: Elements.WAITS_SCREEN_ENTRY_APP
                 });
@@ -153,6 +169,7 @@ define(['underscore', 'jquery', 'backbone', 'AppAuth', 'NavigationView', 'AppEnt
 
                 this.m_appEntryFaderView.addView(this.m_loginView);
                 this.m_appEntryFaderView.addView(this.m_logoutView);
+                this.m_appEntryFaderView.addView(this.m_livePreview);
                 this.m_appEntryFaderView.addView(this.m_appContentFaderView);
                 this.m_appEntryFaderView.addView(this.m_mainAppWaitView);
 
@@ -166,10 +183,23 @@ define(['underscore', 'jquery', 'backbone', 'AppAuth', 'NavigationView', 'AppEnt
              @method Update
              **/
             _initDashBoard: function () {
-                //todo create a separate backbone view for dashboard
-                $(Elements.SERVER_NAME).text(jalapeno.getUserData().domain);
-                $(Elements.BUISINESS_ID).text(jalapeno.getUserData().businessID);
-                $(Elements.LOGGED_USER_NAME).text(jalapeno.getUserData().userName);
+                $(Elements.SERVER_NAME).text(pepper.getUserData().domain);
+                $(Elements.BUISINESS_ID).text(pepper.getUserData().businessID);
+                $(Elements.CLASS_USER_NAME).text(pepper.getUserData().userName);
+            },
+
+            /**
+             Setup customer account
+             @method _initCustomer
+             **/
+            _initCustomer: function () {
+                var self = this;
+                if (pepper.getUserData().resellerID == 1 || pepper.getUserData().whiteLabel == 0) {
+                    $(Elements.CLASS_RES_HID).fadeIn();
+                } else {
+                    $(Elements.APP_NAME).text(pepper.getUserData().resellerName);
+                    $(Elements.CLASS_RES_HID).remove();
+                }
             },
 
             /**
@@ -179,70 +209,83 @@ define(['underscore', 'jquery', 'backbone', 'AppAuth', 'NavigationView', 'AppEnt
              @method _initContentPage
              **/
             _initContentPage: function () {
-
-                this.m_navigationView = new NavigationView({
+                var self = this;
+                self.m_navigationView = new NavigationView({
                     el: Elements.FILE_MENU
                 });
 
-                this.m_campaignManagerView = new CampaignManagerView({
+                self.m_campaignManagerView = new CampaignManagerView({
                     el: Elements.CAMPAIGN_MANAGER_VIEW
                 });
 
-                this.m_campaignSliderStackView = new CampaignSliderStackView({
+                self.m_campaignSliderStackView = new CampaignSliderStackView({
                     el: Elements.CAMPAIGN_SLIDER
                 });
 
-                this.m_resourcesView = new ResourcesView({
+                self.m_ResourcesLoaderView = new ResourcesLoaderView({
                     el: Elements.RESOURCES_PANEL,
-                    stackView: this.m_appContentFaderView
+                    stackView: self.m_appContentFaderView
                 });
 
-                this.m_stationsView = new StationsView({
+                self.m_stationsViewLoader = new StationsViewLoader({
                     el: Elements.STATIONS_PANEL,
-                    stackView: this.m_appContentFaderView
+                    stackView: self.m_appContentFaderView
                 });
 
-                this.m_settingsView = new SettingsView({
+                self.m_scenesLoaderView = new ScenesLoaderView({
+                    el: Elements.SCENES_PANEL,
+                    stackView: self.m_appContentFaderView
+                });
+
+                self.m_settingsView = new SettingsView({
                     el: Elements.SETTINGS_PANEL,
-                    stackView: this.m_appContentFaderView
+                    stackView: self.m_appContentFaderView
                 });
 
-                this.m_proStudioView = new ProStudioView({
+                self.m_proStudioView = new ProStudioView({
                     el: Elements.PRO_STUDIO_PANEL,
+                    stackView: self.m_appContentFaderView
+                });
+
+                self.m_helpView = new HelpView({
+                    el: Elements.HELP_PANEL,
                     stackView: this.m_appContentFaderView
                 });
 
-                this.m_helpView = new HelpView({
-                    el: Elements.HELP_PANEL,
+                self.m_installView = new InstallView({
+                    el: Elements.INSTALL_PANEL,
                     stackView: this.m_appContentFaderView
                 });
 
                 this.m_logoutView = new LogoutView({
                     el: Elements.LOGOUT_PANEL,
-                    stackView: this.m_appContentFaderView
+                    stackView: self.m_appContentFaderView
                 });
 
-                this.m_appContentFaderView.addView(this.m_campaignManagerView);
-                this.m_appContentFaderView.addView(this.m_resourcesView);
-                this.m_appContentFaderView.addView(this.m_stationsView);
-                this.m_appContentFaderView.addView(this.m_settingsView);
-                this.m_appContentFaderView.addView(this.m_proStudioView);
-                this.m_appContentFaderView.addView(this.m_helpView);
-                this.m_appContentFaderView.addView(this.m_logoutView);
-                this.m_appContentFaderView.selectView(this.m_campaignManagerView);
+                self.m_appContentFaderView.addView(self.m_campaignManagerView);
+                self.m_appContentFaderView.addView(self.m_ResourcesLoaderView);
+                self.m_appContentFaderView.addView(self.m_stationsViewLoader);
+                self.m_appContentFaderView.addView(self.m_scenesLoaderView);
+                self.m_appContentFaderView.addView(self.m_settingsView);
+                self.m_appContentFaderView.addView(self.m_proStudioView);
+                self.m_appContentFaderView.addView(self.m_helpView);
+                self.m_appContentFaderView.addView(self.m_installView);
+                self.m_appContentFaderView.addView(self.m_logoutView);
+                // self.m_appContentFaderView.selectView(self.m_scenesLoaderView); // debug mode
+                self.m_appContentFaderView.selectView(self.m_campaignManagerView);
 
-                BB.comBroker.setService(BB.SERVICES['NAVIGATION_VIEW'], this.m_navigationView);
+                BB.comBroker.setService(BB.SERVICES['NAVIGATION_VIEW'], self.m_navigationView);
             },
 
             /**
-             Use the previously created CampaignSliderStackView to add new views to it for campaign wizard slider animation which include
+             Use the previously created CampaignSliderStackView to add new views for campaign wizard slider animation which include
              CampaignSelector, Screen Orientation, Screen Resolution and Campaign
              @method _initCampaignWizardPage
              **/
             _initCampaignWizardPage: function () {
                 var self = this;
 
-                require(['CampaignSelectorView', 'OrientationSelectorView', 'ResolutionSelectorView', 'CampaignView', 'CampaignNameSelectorView', 'AddBlockView'], function (CampaignSelectorView, OrientationSelectorView, ResolutionSelectorView, CampaignView, CampaignNameSelectorView, AddBlockView) {
+                require(['CampaignSelectorView', 'OrientationSelectorView', 'ResolutionSelectorView', 'CampaignView', 'CampaignNameSelectorView', 'AddBlockView', 'ScreenLayoutEditorView'], function (CampaignSelectorView, OrientationSelectorView, ResolutionSelectorView, CampaignView, CampaignNameSelectorView, AddBlockView, ScreenLayoutEditorView) {
 
                     self.m_campaignSelectorView = new CampaignSelectorView({
                         stackView: self.m_campaignSliderStackView,
@@ -299,9 +342,17 @@ define(['underscore', 'jquery', 'backbone', 'AppAuth', 'NavigationView', 'AppEnt
                         stackView: self.m_campaignSliderStackView,
                         from: Elements.CAMPAIGN,
                         el: Elements.ADD_BLOCK_VIEW,
-                        to: Elements.CAMPAIGN_SELECTOR
+                        to: Elements.CAMPAIGN_SELECTOR,
+                        placement: BB.CONSTS.PLACEMENT_CHANNEL
                     });
                     BB.comBroker.setService(BB.SERVICES.ADD_BLOCK_VIEW, self.m_addBlockView);
+
+                    self.m_screenLayoutEditorView = new ScreenLayoutEditorView({
+                        stackView: self.m_campaignSliderStackView,
+                        from: Elements.CAMPAIGN,
+                        el: Elements.SCREEN_LAYOUT_EDITOR_VIEW,
+                        to: Elements.CAMPAIGN_SELECTOR
+                    });
 
                     self.m_campaignSliderStackView.addView(self.m_campaignSelectorView);
                     self.m_campaignSliderStackView.addView(self.m_campaignNameSelectorView);
@@ -324,13 +375,15 @@ define(['underscore', 'jquery', 'backbone', 'AppAuth', 'NavigationView', 'AppEnt
                 require(['PropertiesView'], function (PropertiesView) {
                     this.m_propertiesView = new PropertiesView({
                         el: Elements.PROP_PANEL,
-                        duration: 400
+                        duration: 300
                     });
-                    this.m_emptyPropView = new BB.View({
-                        el: Elements.EMPTY_PROPERTIES
+
+                    this.m_dashboardPropView = new DashboardView({
+                        el: Elements.DASHBOARD_PROPERTIES
                     });
-                    self.m_propertiesView.addView(this.m_emptyPropView);
-                    self.m_propertiesView.selectView(this.m_emptyPropView);
+
+                    self.m_propertiesView.addView(this.m_dashboardPropView);
+                    self.m_propertiesView.selectView(this.m_dashboardPropView);
                     BB.comBroker.setService(BB.SERVICES.PROPERTIES_VIEW, this.m_propertiesView);
                 });
             },
@@ -361,6 +414,19 @@ define(['underscore', 'jquery', 'backbone', 'AppAuth', 'NavigationView', 'AppEnt
             },
 
             /**
+             Listen logo mouse hover
+             @method _listenLogoHover
+             **/
+            _listenLogoHover: function () {
+                $('.flip').mouseenter(function () {
+                    $(this).find('.card').addClass('flipped').mouseleave(function () {
+                        $(this).removeClass('flipped');
+                    });
+                    return false;
+                });
+            },
+
+            /**
              Listen to application size changes and lazy update when so
              @method _listenSizeChanges
              **/
@@ -377,14 +443,23 @@ define(['underscore', 'jquery', 'backbone', 'AppAuth', 'NavigationView', 'AppEnt
             _updateLayout: function () {
                 var self = BB.comBroker.getService(BB.SERVICES['LAYOUT_ROUTER']);
                 var b = $('body');
-                self._appHeight = b.css('height').replace('px', '');
-                self._appWidth = b.css('width').replace('px', '');
+                self._appHeight = parseInt(b.css('height').replace('px', ''));
+                self._appWidth = parseInt(b.css('width').replace('px', ''));
                 var h = self._appHeight - 115; // reduce footer
+
                 $(Elements.PROP_PANEL_WRAP).height(h);
                 $(Elements.MAIN_PANEL_WRAP).height(h);
                 $(Elements.APP_NAVIGATOR).height(h);
-                $(Elements.RESOURCE_LIB_LIST_WRAP).height(h);
-                BB.comBroker.fire(BB.EVENTS.APP_SIZED);
+                $(Elements.RESOURCE_LIB_LIST_WRAP).height(h - 40);
+                $(Elements.PRICING_TABLE_WRAP).height(h - 200);
+                $(Elements.BLOCK_SUBPROPERTIES).height(h - 200);
+                $(Elements.BLOCK_COMMON_PROPERTIES).height(h - 200);
+                $(Elements.CLASS_ADD_NEW_BLOCK_LIST_WRAP).height(h);
+                $(Elements.IFRAME_PREVIEW).height(h - 40);
+                $(Elements.DASHBOARD_PROPERTIES).height(h - 30);
+
+
+                BB.comBroker.fire(BB.EVENTS.APP_SIZED, this, null, {width: self._appWidth, height: self._appHeight});
             },
 
             /**

@@ -5,7 +5,19 @@
  @constructor
  **/
 define(['backbone'], function (Backbone) {
+
+    BB.SERVICES.CAMPAIGN_MANAGER_VIEW = 'CampaignManagerView';
+
     var CampaignManagerView = Backbone.View.extend({
+
+        /**
+         Constructor
+         @method initialize
+         **/
+        initialize: function () {
+            var self = this;
+            BB.comBroker.setService(BB.SERVICES['CAMPAIGN_MANAGER_VIEW'], self);
+        }
     })
 
     return CampaignManagerView;

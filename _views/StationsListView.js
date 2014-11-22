@@ -6,7 +6,9 @@
  @param {String} i_container element that CompCampaignNavigator inserts itself into
  @return {Object} instantiated StationsListView
  **/
-define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function ($, Backbone, StationsCollection, AjaxJsonGetter) {
+define(['jquery', 'backbone', 'StationsCollection'], function ($, Backbone, StationsCollection) {
+
+    BB.SERVICES.STATIONS_LIST_VIEW = 'StationsListView';
 
     var StationsListView = Backbone.View.extend({
 
@@ -16,6 +18,9 @@ define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function 
          **/
         initialize: function () {
             var self = this;
+
+            BB.comBroker.setService(BB.SERVICES['STATIONS_LIST_VIEW'], self);
+
             self.m_snapshotInProgress = undefined;
             self.m_imageReloadCount = 0;
             self.m_imagePath = '';
@@ -25,12 +30,13 @@ define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function 
 
             self.m_stationCollection = new StationsCollection();
 
-            self.ajaxJsonGetter = new AjaxJsonGetter({
-                key: BB.globs['RC4KEY'],
-                url: 'https://secure.dynawebs.net/_php/msWSsec-debug.php?' + Date.now()
-            });
+            //self.ajaxJsonGetter = new AjaxJsonGetter({
+            //    key: BB.globs['RC4KEY'],
+            //    url: 'https://secure.dynawebs.net/_php/msWSsec-debug.php?' + Date.now()
+            //});
 
             self.listenTo(self.m_stationCollection, 'add', function (i_model) {
+                $(Elements.STATION_ALERT).hide();
                 self._onAddStation(i_model);
                 self._listenStationSelected();
             });
@@ -43,8 +49,8 @@ define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function 
             self._wireSnapshot();
             self._populateStationCampaignDropDown(-1);
 
-            BB.comBroker.listen(BB.EVENTS.APP_SIZED, self._reconfigSnapLocation);
-            self._reconfigSnapLocation();
+            // BB.comBroker.listen(BB.EVENTS.APP_SIZED, self._reconfigSnapLocation);
+            // self._reconfigSnapLocation();
         },
 
         /**
@@ -55,7 +61,9 @@ define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function 
         render: function () {
             var self = this;
             self.m_stationCollection.resumeGetRemoteStations();
-            log('in view');
+            self.getTotalActiveStation();
+            // log('in view');
+
         },
 
         /**
@@ -66,7 +74,7 @@ define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function 
         unrender: function () {
             var self = this;
             self.m_stationCollection.pauseGetRemoteStations();
-            log('not in view');
+            // log('out of view');
         },
 
         /**
@@ -129,7 +137,7 @@ define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function 
         /**
          Reconfigure the location (offset) of the screen snapshot UI depending on current property with
          @method _reconfigSnapLocation
-         **/
+
         _reconfigSnapLocation: function () {
             var offset = BB.comBroker.getService(BB.SERVICES['PROPERTIES_VIEW']).getPropWidth();
             if (offset < 240)
@@ -145,6 +153,7 @@ define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function 
                 left: (offset / 2) - 20 + 'px'
             });
         },
+         **/
 
         /**
          Update existing station in list with data from remote mediaSERVER
@@ -167,7 +176,7 @@ define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function 
         },
 
         /**
-         When new data is available from the remote server, update the list with current data.
+         When data is available from the remote server, update the list with current data.
          @method _onAddStation
          @param {Event} e remote server data call back from Ajax call
          @return none
@@ -194,14 +203,14 @@ define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function 
             var self = this;
             $(Elements.STATION_PLAY_COMMAND + ' , ' + Elements.STATION_STOP_COMMAND).on('click', function (e) {
                 var command = BB.lib.unhash(Elements.STATION_PLAY_COMMAND) == e.currentTarget.id ? 'start' : 'stop';
-                jalapeno.sendCommand(command, self.m_selected_station_id, function () {
+                pepper.sendCommand(command, self.m_selected_station_id, function () {
                     // log('cmd done'+command);
                 });
                 return false;
             });
 
             $(Elements.STATION_RELOAD_COMMAND).on('click', function (e) {
-                jalapeno.sendCommand('rebootPlayer', self.m_selected_station_id, function () {
+                pepper.sendCommand('rebootPlayer', self.m_selected_station_id, function () {
                 });
                 return false;
             });
@@ -217,7 +226,7 @@ define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function 
 
             $(Elements.STATION_EVENT_SEND_COMMAND).on('click', function () {
                 var eventValue = $(Elements.STATION_SEND_EVENT_VALUE).val();
-                jalapeno.sendEvent(eventValue, self.m_selected_station_id, function () {
+                pepper.sendEvent(eventValue, self.m_selected_station_id, function () {
                 });
             });
         },
@@ -240,21 +249,20 @@ define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function 
          @param {String} i_eventName
          @param {String} i_eventValue
          @return none
-         **/
         _sendStationEvent: function (i_eventName, i_eventValue) {
             var self = this;
             model.sendStationEvent(model.getDataByID(self.m_selected_resource_id)['id'], i_eventName, i_eventValue);
             $(Elements.EVENT_SEND_BUTTON).button('disable');
         },
-
+         **/
         _removeStation: function (i_context) {
             var self = i_context;
             if (_.isUndefined(self.m_selected_station_id)) {
                 bootbox.dialog({
-                    message: "No station selected",
+                    message: $(Elements.MSG_BOOTBOX_NO_STATION_SELECTED).text(),
                     buttons: {
                         danger: {
-                            label: "OK",
+                            label: $(Elements.MSG_BOOTBOX_OK).text(),
                             className: "btn-danger",
                             callback: function () {
                             }
@@ -263,18 +271,15 @@ define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function 
                 });
                 return false;
             }
-            bootbox.confirm("<p>The following steps will take place, please confirm?</p>" +
-                "<ol>" +
-                "<li>station will be deleted</li>" +
-                "<li>your work will be saved to the server</li>" +
-                "<li>station will be de-registered</li>" +
-                "<ol/>", function (result) {
+            bootbox.confirm($(Elements.MSG_BOOTBOX_STEPS).text(), function (result) {
                 if (result == true) {
                     var navigationView = BB.comBroker.getService(BB.SERVICES.NAVIGATION_VIEW);
-                    jalapeno.sendCommand('rebootPlayer', self.m_selected_station_id,function(){});
-                    jalapeno.removeStation(self.m_selected_station_id);
-                    navigationView.save(function(){});
-                    jalapeno.sync();
+                    pepper.sendCommand('rebootPlayer', self.m_selected_station_id, function () {
+                    });
+                    pepper.removeStation(self.m_selected_station_id);
+                    navigationView.save(function () {
+                    });
+                    pepper.sync();
                     self._removeStationFromLI(self.m_selected_station_id);
                     navigationView.resetPropertiesView();
                 }
@@ -286,7 +291,7 @@ define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function 
          @method _removeStationFromLI
          @param {Number} i_stationID
          **/
-        _removeStationFromLI: function(i_stationID){
+        _removeStationFromLI: function (i_stationID) {
             var self = this;
             $(Elements.STATION_LIST_VIEW).find('[data-station_id="' + i_stationID + '"]').remove();
         },
@@ -303,7 +308,7 @@ define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function 
                 self._listenSnapshotComplete();
 
                 /* Can't use short path due to IE error, gotta go long route via _sendSnapshotCommand
-                 self.m_imagePath = jalapeno.sendSnapshot(Date.now(), '0.2', self.m_selected_station_id, function (e) {});
+                 self.m_imagePath = pepper.sendSnapshot(Date.now(), '0.2', self.m_selected_station_id, function (e) {});
                  log(self.m_imagePath);
                  */
 
@@ -338,6 +343,13 @@ define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function 
          **/
         _sendSnapshotCommand: function (i_station) {
             var self = this;
+            var d =  new Date().getTime();
+            var path = pepper.sendSnapshot(d,0.2,i_station,function(e){});
+            setTimeout(function(){
+                self.m_imagePath = path;
+            },3000);
+
+            /*
             var data = {
                 '@functionName': 'f_captureScreen',
                 '@stationID': i_station,
@@ -347,9 +359,14 @@ define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function 
             self.ajaxJsonGetter.getData(data, onSnapshotReply);
             function onSnapshotReply(e) {
                 if (e.responce['status'] == 'pass') {
+                    log('getting image from ' + e.responce['path']);
                     self.m_imagePath = e.responce['path'];
                 }
             }
+             // self.m_imagePath = 'https://pluto.signage.me/Snapshots/business355181/station12/1397689062944.jpg';
+             // return;
+            */
+
         },
 
         /**
@@ -394,7 +411,7 @@ define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function 
          **/
         _selectCampaignDropDownForStation: function (i_stationID) {
             var self = this;
-            var campaignID = jalapeno.getStationCampaignID(i_stationID);
+            var campaignID = pepper.getStationCampaignID(i_stationID);
             self._populateStationCampaignDropDown(campaignID);
         },
 
@@ -408,10 +425,10 @@ define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function 
             $(Elements.STATION_SELECTION_CAMPAIGN).empty();
             if (i_campaignID == undefined || i_campaignID == -1)
                 $(Elements.STATION_SELECTION_CAMPAIGN).append('<option selected data-campaign_id="-1">Select campaign</option>');
-            var campaignIDs = jalapeno.getCampaignIDs();
+            var campaignIDs = pepper.getCampaignIDs();
             for (var i = 0; i < campaignIDs.length; i++) {
                 var campaignID = campaignIDs[i];
-                var recCampaign = jalapeno.getCampaignRecord(campaignID);
+                var recCampaign = pepper.getCampaignRecord(campaignID);
                 var selected = campaignID == i_campaignID ? 'selected' : '';
                 var snippet = '<option ' + selected + ' data-campaign_id="' + campaignID + '">' + recCampaign['campaign_name'] + '</option>';
                 $(Elements.STATION_SELECTION_CAMPAIGN).append(snippet);
@@ -427,7 +444,31 @@ define(['jquery', 'backbone', 'StationsCollection', 'AjaxJsonGetter'], function 
             var campaign_id = $(Elements.STATION_SELECTION_CAMPAIGN + ' option:selected').attr('data-campaign_id');
             if (campaign_id == -1)
                 return;
-            jalapeno.setStationCampaignID(self.m_selected_station_id, campaign_id);
+            pepper.setStationCampaignID(self.m_selected_station_id, campaign_id);
+        },
+
+        /**
+         Get current total active, non red stations
+         @method getTotalActiveStation
+         @param {Number} i_playerData
+         @return {Number} total active / non red stations
+         **/
+        getTotalActiveStation: function () {
+            var self = this;
+            var connected = self.m_stationCollection.filter(function (stationsModel) {
+                return stationsModel.get('connection') != '0'
+            });
+            return connected.length;
+        },
+
+        /**
+         Restart station
+         @method restartStation
+         **/
+        restartStation: function () {
+            pepper.sendCommand('rebootPlayer', -1, function () {
+            });
+            return false;
         }
     });
 

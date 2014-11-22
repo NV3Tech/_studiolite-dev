@@ -31,11 +31,9 @@ define(['jquery', 'backbone'], function ($, Backbone) {
         /**
          Constructor
          @method initialize
-         @return {} Unique clientId.
          **/
         initialize: function () {
             this.m_services = [];
-            this.m_uniqueCounter = 0;
             Backbone.EVENTS.SERVICE_REGISTERED = 'SERVICE_REGISTERED'
         },
 
@@ -86,6 +84,10 @@ define(['jquery', 'backbone'], function ($, Backbone) {
          @return {Object} m_services member
          **/
         getService: function (i_name) {
+            if (i_name == undefined) {
+                log('cant get set undefined service ' + i_name);
+                return undefined;
+            }
             if (this.m_services[i_name]) {
                 return this.m_services[i_name]
             } else {
@@ -100,6 +102,16 @@ define(['jquery', 'backbone'], function ($, Backbone) {
          **/
         getAllServices: function () {
             return this.m_services;
+        },
+
+        /**
+         Clear all current registered services
+         @method clearServices
+         **/
+        clearServices: function () {
+            var self = this;
+            // delete self.m_services;
+            self.m_services = undefined;
         },
 
         /**
@@ -133,11 +145,9 @@ define(['jquery', 'backbone'], function ($, Backbone) {
                     events[i] = "'" + events[i] + "'";
                 }
                 events = events.join(',');
-                $(this).bind(eval(events), func);
-
+                return $(this).bind(eval(events), func);
             } else {
-
-                $(this).bind(events, func);
+                return $(this).bind(events, func);
             }
         },
 
@@ -153,7 +163,7 @@ define(['jquery', 'backbone'], function ($, Backbone) {
          **/
         listenWithNamespace: function (event, caller, func) {
             if (caller.eventNamespace == undefined)
-                caller.eventNamespace = this.m_uniqueCounter++;
+                caller.eventNamespace = _.uniqueId();
             var namespacEvent = event + '.' + caller.eventNamespace;
             $(this).bind(namespacEvent, func);
         },
@@ -161,7 +171,7 @@ define(['jquery', 'backbone'], function ($, Backbone) {
         /**
          Stop listening to an event but only within the context of a specific listener instance.
          @method stopListenWithNamespace
-         @param {Event} event
+         @param {String} event
          @param {Function} func
          @return none
          **/

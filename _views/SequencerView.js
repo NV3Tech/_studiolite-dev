@@ -5,7 +5,7 @@
  @param {String} i_container element that CompCampaignNavigator inserts itself into
  @return {Object} instantiated CompCampaignNavigator
  **/
-define(['jquery', 'backbone', 'jqueryui', 'ScreenTemplateFactory'], function ($, Backbone, jqueryui, ScreenTemplateFactory) {
+define(['jquery', 'backbone', 'jqueryui', 'ScreenTemplateFactory', 'contextmenu'], function ($, Backbone, jqueryui, ScreenTemplateFactory, contextmenu) {
 
     BB.SERVICES.SEQUENCER_VIEW = 'SequencerView';
 
@@ -21,14 +21,15 @@ define(['jquery', 'backbone', 'jqueryui', 'ScreenTemplateFactory'], function ($,
             var self = this;
             this.m_thumbsContainer = this.$el;
             this.m_timelines = {};
+            this.m_screenTemplates = {};
 
             self._initLayoutSelectorDragDrop();
+            self._listenContextMenu();
+            self._listenReset();
             setTimeout(function () {
                 $(Elements.ATTACH_DRAG_DROP_MAIN_SCREEN_SELECTION).trigger('click');
             }, 3000);
-
-            $(jalapeno).on(Jalapeno.TIMELINE_DELETED, $.proxy(self._deleteSequencedTimeline, self));
-
+            pepper.listen(Pepper.TIMELINE_DELETED, $.proxy(self._deleteSequencedTimeline, self));
         },
 
         /**
@@ -83,6 +84,70 @@ define(['jquery', 'backbone', 'jqueryui', 'ScreenTemplateFactory'], function ($,
         },
 
         /**
+         Listen to any canvas right click
+         @method _listenContextMenu
+         **/
+        _listenContextMenu: function () {
+            var self = this;
+            $(Elements.SCREEN_SELECTOR_CONTAINER).contextmenu({
+                target: Elements.SEQUENCER_CONTEXT_MENU,
+                before: function (e, element, target) {
+                    e.preventDefault();
+                    //self.m_mouseX = e.offsetX;
+                    //self.m_mouseY = e.offsetY;
+                    return true;
+                },
+                onItem: function (context, e) {
+                    self._onContentMenuSelection($(e.target).attr('name'))
+                }
+            });
+        },
+
+        /**
+         On Scene right click context menu selection command
+         @method _onContentMenuSelection
+         @param {String} i_command
+         **/
+        _onContentMenuSelection: function (i_command) {
+            var self = this;
+            var campaign_timeline_id = BB.comBroker.getService(BB.SERVICES.CAMPAIGN_VIEW).getSelectedTimeline();
+            if (campaign_timeline_id == -1 || _.isUndefined(campaign_timeline_id))
+                return;
+
+            switch (i_command){
+                case 'firstChannel': {
+                    $(Elements.SELECT_NEXT_CHANNEL).trigger('click');
+                    break;
+                }
+                case 'editLayout': {
+                    $(Elements.EDIT_SCREEN_LAYOUT).trigger('click');
+                    break;
+                }
+                case 'duplicate': {
+                    BB.comBroker.getService(BB.SERVICES.CAMPAIGN_VIEW).duplicateTimeline(campaign_timeline_id, {});
+                    break;
+                }
+                case 'remove': {
+                    $(Elements.REMOVE_TIMELINE_BUTTON).trigger('click');
+                    break;
+                }
+                case 'first': {
+                    var elem =  $(self.m_thumbsContainer).find('[data-campaign_timeline_id="' + campaign_timeline_id + '"]').eq(0).closest('svg');
+                    $(self.m_thumbsContainer).prepend(elem);
+                    self.reSequenceTimelines();
+                    break;
+                }
+                case 'last': {
+                    var elem =  $(self.m_thumbsContainer).find('[data-campaign_timeline_id="' + campaign_timeline_id + '"]').eq(0).closest('svg');
+                    $(self.m_thumbsContainer).append(elem);
+                    self.reSequenceTimelines();
+                    break;
+                }
+            }
+            return true;
+        },
+
+        /**
          Delete a timeline from the Sequencer UI, as well as from the local member m_timelines.
          @method _deleteSequencedTimeline
          @param {Number} i_campaign_timeline_id
@@ -91,12 +156,60 @@ define(['jquery', 'backbone', 'jqueryui', 'ScreenTemplateFactory'], function ($,
         _deleteSequencedTimeline: function (e) {
             var self = this;
             var campaign_timeline_id = e.edata;
-            var elementID = self.m_timelines[campaign_timeline_id];
-            $('#' + elementID).remove();
-            // var timeline = self.m_timelines[i_campaign_timeline_id];
+            self._deleteTimelineThumbUI(campaign_timeline_id);
             delete self.m_timelines[campaign_timeline_id];
-            jalapeno.removeTimelineFromSequences(campaign_timeline_id);
+            pepper.removeTimelineFromSequences(campaign_timeline_id);
             self.reSequenceTimelines();
+        },
+
+        /**
+         Remove the element's UI thumb of a template layout
+         @method _deleteTimelineThumbUI
+         @param {Number} i_campaign_timeline_id
+         **/
+        _deleteTimelineThumbUI: function (i_campaign_timeline_id) {
+            var self = this;
+            var elementID = self.m_timelines[i_campaign_timeline_id];
+            $('#' + elementID).remove();
+            if (self.m_screenTemplates[i_campaign_timeline_id])
+                self.m_screenTemplates[i_campaign_timeline_id].destroy();
+        },
+
+        /**
+         Listen to reset of when switching to different campaign so we forget current state
+         @method _listenReset
+         **/
+        _listenReset: function () {
+            var self = this;
+            BB.comBroker.listen(BB.EVENTS.CAMPAIGN_RESET, function () {
+                self.m_timelines = {};
+                self.m_screenTemplates = {};
+                $(self.m_thumbsContainer).empty();
+            });
+        },
+
+        /**
+         Select the first timeline in the Sequencer
+         @method selectFirstTimeline
+         **/
+        selectFirstTimeline: function () {
+            var self = this;
+            var timeline;
+            for (timeline in self.m_timelines) {
+                self.selectTimeline(timeline);
+                break;
+            }
+        },
+
+        /**
+         Select a viewer
+         @method selectViewer
+         @param {Number} i_timeline_id
+         @param {Number} i_viewer_id
+         **/
+        selectViewer: function (i_timeline_id, i_viewer_id) {
+            var self = this;
+            self.m_screenTemplates[i_timeline_id].selectDivison(i_viewer_id);
         },
 
         /**
@@ -105,15 +218,24 @@ define(['jquery', 'backbone', 'jqueryui', 'ScreenTemplateFactory'], function ($,
          via the ScreenTemplateFactory public methods.
          @method createTimelineThumbnailUI
          @param {Object} i_screenProps
-         @return none
          **/
         createTimelineThumbnailUI: function (i_screenProps) {
             var self = this;
+            var index = -1;
+            var elem = undefined;
 
-            // Get the timelineid for current the timeline creating
+            // Get the timeline id for current timeline creating
             for (var screenProp in i_screenProps) {
                 var campaign_timeline_id = i_screenProps[screenProp]['campaign_timeline_id']
                 break;
+            }
+
+            // if timeline_id already exists, it means this is an update from ScreenLayoutEditorView so we
+            // must first delete previous UI as well as it's matching instance
+            if (self.m_timelines[campaign_timeline_id] != undefined) {
+                var elementID = '#' + self.m_timelines[campaign_timeline_id];
+                index = $(elementID).index();
+                self._deleteTimelineThumbUI(campaign_timeline_id);
             }
 
             var screenTemplateData = {
@@ -125,7 +247,7 @@ define(['jquery', 'backbone', 'jqueryui', 'ScreenTemplateFactory'], function ($,
 
             var screenTemplate = new ScreenTemplateFactory({
                 i_screenTemplateData: screenTemplateData,
-                i_type: BB.CONSTS.ENTIRE_SELECTABLE,
+                i_selfDestruct: false,
                 i_owner: this
             });
 
@@ -133,11 +255,45 @@ define(['jquery', 'backbone', 'jqueryui', 'ScreenTemplateFactory'], function ($,
             var elementID = $(snippet).attr('id');
 
             self.m_timelines[campaign_timeline_id] = elementID;
+            self.m_screenTemplates[campaign_timeline_id] = screenTemplate;
 
-            screenTemplate.selectablelDivision();
-            screenTemplate.activate();
-            self.m_thumbsContainer.append(snippet);
-            screenTemplate.selectableFrame();
+            //screenTemplate.selectablelDivision();
+            //screenTemplate.activate();
+
+            switch (index) {
+                case -1:
+                {
+                    // position thumbnail in beginning (first creation)
+                    self.m_thumbsContainer.append(snippet);
+                    screenTemplate.selectableFrame();
+                    break;
+                }
+
+                case 0:
+                {
+                    // position thumbnail index in beginning (append if no other thumbnails)
+                    elem = self.m_thumbsContainer.children().eq(0);
+                    if (elem.length > 0) {
+                        $(snippet).insertBefore(elem)
+                    } else {
+                        self.m_thumbsContainer.append(snippet);
+                    }
+                    screenTemplate.selectableFrame();
+                    break;
+                }
+
+                default:
+                {
+                    // position thumbnail as previous index position
+                    elem = self.m_thumbsContainer.children().eq(index - 1);
+                    $(snippet).insertAfter(elem)
+                    screenTemplate.selectableFrame();
+                    break;
+                }
+            }
+
+            //self.selectTimeline(campaign_timeline_id);
+            // self.selectFirstTimeline();
         },
 
         /**
@@ -147,12 +303,11 @@ define(['jquery', 'backbone', 'jqueryui', 'ScreenTemplateFactory'], function ($,
          **/
         reSequenceTimelines: function () {
             var self = this;
-
             var timelines = $(self.m_thumbsContainer).children().each(function (sequenceIndex) {
                 var element = $(this).find('[data-campaign_timeline_id]').eq(0);
                 var campaign_timeline_id = $(element).data('campaign_timeline_id');
                 var selectedCampaign = BB.comBroker.getService(BB.SERVICES.CAMPAIGN_VIEW).getSelectedCampaign();
-                jalapeno.setCampaignTimelineSequencerIndex(selectedCampaign, campaign_timeline_id, sequenceIndex);
+                pepper.setCampaignTimelineSequencerIndex(selectedCampaign, campaign_timeline_id, sequenceIndex);
             });
         },
 
@@ -173,6 +328,7 @@ define(['jquery', 'backbone', 'jqueryui', 'ScreenTemplateFactory'], function ($,
          **/
         selectTimeline: function (i_campaign_timeline_id) {
             var self = this;
+            BB.comBroker.fire(BB.EVENTS.CAMPAIGN_TIMELINE_SELECTED, this, null, i_campaign_timeline_id);
             var total = $(self.m_thumbsContainer).find('[data-campaign_timeline_id="' + i_campaign_timeline_id + '"]').eq(0).trigger('click');
             if (total.length == 0)
                 return -1;

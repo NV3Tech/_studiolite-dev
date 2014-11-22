@@ -30,11 +30,13 @@ define(['jquery', 'backbone', 'StackView'], function ($, Backbone, StackView) {
         /**
          Add a backbone view so we can control its display mode via one of the derived classes
          @method addView
-         @param {View} i_view add a backbone view to control
+         @param {Object} i_view add a backbone view to control
          @return {String} stack view id added
          **/
         addView: function (i_view) {
             i_view.$el.hide();
+            if (i_view.el==undefined)
+                log('')
             var oid = i_view.el.id === '' ? i_view.cid : i_view.el.id;
             this.m_views[oid] = i_view;
             return oid;
@@ -169,14 +171,14 @@ define(['jquery', 'backbone', 'StackView'], function ($, Backbone, StackView) {
         /**
          Class init
          @method constructor
-         @param {Object} options duration, default 1000ms
+         @param {Object} options duration, default 300ms
          **/
         constructor: function (options) {
             options || (options = {});
-            this.m_duration = 1000;
+            this.m_duration = options.duration || 300;
             this.transition = options.transition;
             if (options.views) this.setViews(options.views);
-            if (options.duration) this.m_duration = options.duration;
+            // if (options.duration) this.m_duration = options.duration;
             StackView.ViewPort.prototype.constructor.apply(this, arguments);
         },
 
@@ -190,6 +192,11 @@ define(['jquery', 'backbone', 'StackView'], function ($, Backbone, StackView) {
             var bb_view = self._parseView(i_view);
             if (self.m_selectedView==bb_view)
                 return;
+
+            // stop previous animation on previosuly selected view
+            if (self.m_selectedView.el)
+                self.m_selectedView.$el.stop();
+
             StackView.ViewPort.prototype.selectView.apply(this, arguments);
             $.each(self.m_views, function (id, view) {
                 view.$el.hide();

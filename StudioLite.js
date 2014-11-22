@@ -1,16 +1,18 @@
 /**
  StudioLite MediaSignage Inc (c) open source digital signage project.
- Visit Github for license and docs: http://git.digitalsignage.com
+ Visit Github for licenses and docs: http://git.digitalsignage.com
  @class StudioLite
  @constructor
  @return {Object} instantiated StudioLite
  **/
-define(['underscore', 'jquery', 'backbone', 'bootstrap', 'backbone.controller', 'ComBroker', 'Lib', 'Jalapeno', 'JalapenoHelper'], function (_, $, Backbone, Bootstrap, backbonecontroller, ComBroker, Lib, Jalapeno, JalapenoHelper) {
+define(['underscore', 'jquery', 'backbone', 'bootstrap', 'backbone.controller', 'ComBroker', 'Lib', 'Pepper', 'PepperHelper', 'Elements', 'bootbox'], function (_, $, Backbone, Bootstrap, backbonecontroller, ComBroker, Lib, Pepper, PepperHelper, Elements, bootbox) {
     var StudioLite = Backbone.Controller.extend({
 
         // app init
         initialize: function () {
+            var self = this;
             window.BB = Backbone;
+            window.bootbox = bootbox;
             BB.globs = {};
             BB.SERVICES = {};
             BB.EVENTS = {};
@@ -20,19 +22,36 @@ define(['underscore', 'jquery', 'backbone', 'bootstrap', 'backbone.controller', 
             BB.lib = new Lib();
             BB.lib.addBackboneViewOptions();
             BB.comBroker = new ComBroker();
-            BB.Jalapeno = new Jalapeno();
-            BB.JalapenoHelper = new JalapenoHelper();
-            window.jalapeno = BB.Jalapeno;
-            window.model = BB.JalapenoHelper;
+            BB.comBroker.name = 'AppBroker';
+            BB.Pepper = new Pepper();
+            _.extend(BB.Pepper, BB.comBroker);
+            BB.Pepper.clearServices();
+            BB.Pepper.name = 'JalapenoBroker';
+            BB.PepperHelper = new PepperHelper();
+            window.pepper = BB.Pepper;
             window.log = BB.lib.log;
+            BB.lib.forceBrowserCompatability();
+            BB.lib.promptOnExit();
+
+            // localization
+            require(['LanguageSelectorView', 'Elements'], function (LanguageSelectorView, Elements) {
+                new LanguageSelectorView({appendTo: Elements.LANGUAGE_SELECTION_LOGIN});
+            });
+
+            // theme
+            require(['simplestorage'], function (simplestorage) {
+                var theme = simplestorage.get('theme');
+                if (theme && theme != 'light')
+                    BB.lib.loadCss('style_' + theme + '.css');
+                BB.CONSTS['THEME'] = _.isUndefined(theme) ? 'light' : theme;
+            });
 
             // router init
-            require(['LayoutRouter'], function (LayoutRouter) {
+            require(['LayoutRouter', 'Events'], function (LayoutRouter) {
                 var LayoutRouter = new LayoutRouter();
                 BB.history.start();
-                BB.comBroker.setService(BB.SERVICES['LAYOUT_ROUTER'], LayoutRouter);
                 LayoutRouter.navigate('authenticate/_/_', {trigger: true});
-            })
+            });
         }
     });
 

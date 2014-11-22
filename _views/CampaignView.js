@@ -1,10 +1,33 @@
 /**
- CampaignView manages campaign related logic and UI
+ CampaignView module manages campaign related logic and UI
  @class CampaignView
  @constructor
  @return {Object} instantiated CampaignView
  **/
-define(['jquery', 'backbone', 'SequencerView', 'ChannelListView', 'StackView', 'Timeline', 'ScreenLayoutSelectorView'], function ($, Backbone, SequencerView, ChannelListView, StackView, Timeline, ScreenLayoutSelectorView) {
+define(['jquery', 'backbone', 'SequencerView', 'ChannelListView', 'StackView', 'Timeline', 'ScreenLayoutSelectorView', 'StorylineView', 'BlockFactory'], function ($, Backbone, SequencerView, ChannelListView, StackView, Timeline, ScreenLayoutSelectorView, StorylineView, BlockFactory) {
+
+    /**
+     Custom event fired when a timeline or channel or block within the timeline has changed
+     it ignores the event.
+     @event CAMPAIGN_TIMELINE_CHANGED
+     @param {This} caller
+     @param {Self} context caller
+     @param {Event} timelineID of the timeline selected
+     @static
+     @final
+     **/
+    BB.EVENTS.CAMPAIGN_TIMELINE_CHANGED = 'CAMPAIGN_TIMELINE_CHANGED';
+
+    /**
+     Custom event fired before changing to a new campaign
+     @event CAMPAIGN_SELECTED
+     @param {This} caller
+     @param {Self} context caller
+     @param {Event}
+     @static
+     @final
+     **/
+    BB.EVENTS.CAMPAIGN_RESET = 'CAMPAIGN_RESET';
 
     BB.SERVICES.CAMPAIGN_VIEW = 'CampaignView';
 
@@ -19,36 +42,57 @@ define(['jquery', 'backbone', 'SequencerView', 'ChannelListView', 'StackView', '
          **/
         initialize: function () {
             var self = this;
-            this.m_timelines = {}; // hold references to all created timeline instances
-            this.m_timelineViewStack = new StackView.Fader({el: Elements.SELECTED_TIMELINE});
-            this.m_selected_timeline_id = -1;
-            this.m_selected_campaign_id = -1;
-            this.m_property = BB.comBroker.getService(BB.SERVICES['PROPERTIES_VIEW']);
+            self.m_timelines = {}; // hold references to all created timeline instances
+            self.m_timelineViewStack = new StackView.Fader({el: Elements.SELECTED_TIMELINE, duration: 333});
+            self.m_selected_timeline_id = -1;
+            self.m_selected_campaign_id = -1;
+            self.m_property = BB.comBroker.getService(BB.SERVICES['PROPERTIES_VIEW']);
 
-            this.m_sequencerView = new SequencerView({
+            self.m_blockFactory = BB.comBroker.getService(BB.SERVICES['BLOCK_FACTORY']);
+            if (!self.m_blockFactory)
+                self.m_blockFactory = new BlockFactory();
+
+            self.m_sequencerView = new SequencerView({
                 el: Elements.SCREEN_LAYOUTS_UL
             });
-            BB.comBroker.setService(BB.SERVICES['SEQUENCER_VIEW'], this.m_sequencerView);
 
-            this.m_channelListView = new ChannelListView({
+            self.m_storylineView = new StorylineView({
+                el: Elements.STORYLINE
+            });
+
+            BB.comBroker.setService(BB.SERVICES['SEQUENCER_VIEW'], self.m_sequencerView);
+
+            self.m_channelListView = new ChannelListView({
                 el: Elements.CHANNEL_LIST_VIEW
             });
-            BB.comBroker.setService(BB.SERVICES.CHANNEL_LIST_VIEW, this.m_channelListView);
+            BB.comBroker.setService(BB.SERVICES.CHANNEL_LIST_VIEW, self.m_channelListView);
 
             self.m_property.initPanel(Elements.CHANNEL_PROPERTIES);
             self.m_property.initPanel(Elements.TIMELINE_PROPERTIES);
 
+            self._listenCampaignSelected();
             self._listenDelTimeline();
-            self._onWireTimeLineOrViewerSelected();
+            self._listenTimelineViewSelected();
+            self._listenBackToCampaigns();
             self._listenAddNewTimeline();
+            self._listenCampaignPreview();
+            self._listenSelectNextChannel();
+            self._listenCampaignTimelinePreview();
             self._listenToggleTimelinesCollapsible();
+            self._listenScreenTemplateEdit();
+            self._listenTimelineLengthChanged();
+        },
 
-            self.m_noneSelectedTimelines = new BB.View({el: Elements.NONE_SELECTED_SCREEN_LAYOUT})
-            self.m_timelineViewStack.addView(self.m_noneSelectedTimelines);
-
-            self.listenTo(self.options.stackView, BB.EVENTS.SELECTED_STACK_VIEW, function (e) {
-                if (e == self)
-                    self._render();
+        /**
+         Listen to campaign selection
+         @method _listenCampaignSelected
+         **/
+        _listenCampaignSelected: function () {
+            var self = this;
+            BB.comBroker.listen(BB.EVENTS.CAMPAIGN_SELECTED, function (e) {
+                self._reset();
+                self.m_selected_campaign_id = e.edata;
+                self._render();
             });
         },
 
@@ -59,18 +103,12 @@ define(['jquery', 'backbone', 'SequencerView', 'ChannelListView', 'StackView', '
          **/
         _render: function () {
             var self = this;
-            self.stopListening(self.options.stackView, BB.EVENTS.SELECTED_STACK_VIEW);
-
-            // a new campaign was just created
-            if (self.m_selected_campaign_id != -1)
-                return;
-
-            // a previous campaign was loaded from CampaignSelectorView
             self.m_selected_campaign_id = BB.comBroker.getService(BB.SERVICES.CAMPAIGN_SELECTOR).getSelectedCampaign();
+            if (self.m_selected_campaign_id == -1)
+                return;
             self._loadTimelinesFromDB();
             self._loadSequencerFirstTimeline();
-            self._updatedTimelineLengthUI(null);
-            self._listenTimelineLengthChanged();
+            self._updatedTimelinesLengthUI();
         },
 
         /**
@@ -82,10 +120,10 @@ define(['jquery', 'backbone', 'SequencerView', 'ChannelListView', 'StackView', '
             var self = this;
             var sequenceOrder = [];
 
-            var timelineIDs = jalapeno.getCampaignTimelines(self.m_selected_campaign_id);
+            var timelineIDs = pepper.getCampaignTimelines(self.m_selected_campaign_id);
             for (var i = 0; i < timelineIDs.length; i++) {
                 var campaign_timeline_id = timelineIDs[i];
-                var sequenceIndex = jalapeno.getCampaignTimelineSequencerIndex(campaign_timeline_id);
+                var sequenceIndex = pepper.getCampaignTimelineSequencerIndex(campaign_timeline_id);
                 sequenceOrder[parseInt(sequenceIndex)] = parseInt(campaign_timeline_id);
             }
 
@@ -102,23 +140,24 @@ define(['jquery', 'backbone', 'SequencerView', 'ChannelListView', 'StackView', '
          **/
         _loadSequencerFirstTimeline: function () {
             var self = this;
-            var firstTimelineID = jalapeno.getCampaignTimelineIdOfSequencerIndex(self.m_selected_campaign_id, 0);
-            if (self.m_sequencerView.selectTimeline(firstTimelineID) == -1)
-                self.m_timelineViewStack.selectView(self.m_noneSelectedTimelines);
+            self.m_sequencerView.selectFirstTimeline();
+            //var firstTimelineID = pepper.getCampaignTimelineIdOfSequencerIndex(self.m_selected_campaign_id, 0);
+            //if (self.m_sequencerView.selectTimeline(firstTimelineID) == -1)
+            //    self.m_timelineViewStack.selectView(self.m_noneSelectedTimelines);
         },
 
         /**
          This is a key method that we use to listen to fire event of ScreenLayoutSelectorView.ON_VIEWER_SELECTED.
          Upon the event we examine e.context.m_owner to find out who was the owner if the fired event (i.e.: instanceof)
          so we can select tha appropriate campaign or timeline in the UI. See further notes in code.
-         @method _onWireTimeLineOrViewerSelected
+         @method _listenTimelineViewSelected
          @return none
          **/
-        _onWireTimeLineOrViewerSelected: function () {
+        _listenTimelineViewSelected: function () {
             var self = this;
 
             BB.comBroker.listen(BB.EVENTS.ON_VIEWER_SELECTED, function (e) {
-
+                var autoSelectFirstTimeline = true;
                 var campaign_timeline_board_viewer_id = e.caller.campaign_timeline_board_viewer_id;
                 var campaign_timeline_id = e.caller.campaign_timeline_id;
                 self.m_selected_timeline_id = campaign_timeline_id;
@@ -128,9 +167,9 @@ define(['jquery', 'backbone', 'SequencerView', 'ChannelListView', 'StackView', '
                 ////////////////////////////////////////////////
 
                 if (e.context.m_owner instanceof SequencerView) {
-                    self.m_timelineViewStack.selectView(self.m_timelines[campaign_timeline_id].getStackViewID());
+                    //self.m_timelineViewStack.selectView(self.m_timelines[campaign_timeline_id].getStackViewID());
                     BB.comBroker.fire(BB.EVENTS.CAMPAIGN_TIMELINE_SELECTED, this, null, campaign_timeline_id);
-                    self._updatedTimelineLengthUI(null);
+                    self._updatedTimelinesLengthUI();
                     return;
                 }
 
@@ -139,7 +178,7 @@ define(['jquery', 'backbone', 'SequencerView', 'ChannelListView', 'StackView', '
                 ////////////////////////////////////////////////
 
                 if (e.context.m_owner instanceof Timeline) {
-                    var recCampaignTimelineViewerChanels = jalapeno.getChannelIdFromCampaignTimelineBoardViewer(campaign_timeline_board_viewer_id, campaign_timeline_id);
+                    var recCampaignTimelineViewerChanels = pepper.getChannelIdFromCampaignTimelineBoardViewer(campaign_timeline_board_viewer_id, campaign_timeline_id);
                     var campaign_timeline_channel_id = recCampaignTimelineViewerChanels['campaign_timeline_chanel_id']
                     BB.comBroker.fire(BB.EVENTS.CAMPAIGN_TIMELINE_CHANNEL_SELECTED, this, null, campaign_timeline_channel_id);
                     return;
@@ -161,18 +200,20 @@ define(['jquery', 'backbone', 'SequencerView', 'ChannelListView', 'StackView', '
 
                         var width = BB.comBroker.getService(BB.SERVICES['RESOLUTION_SELECTOR_VIEW']).getResolution().split('x')[0];
                         var height = BB.comBroker.getService(BB.SERVICES['RESOLUTION_SELECTOR_VIEW']).getResolution().split('x')[1];
-                        board_id = jalapeno.createBoard('board', width, height);
+                        board_id = pepper.createBoard('board', width, height);
 
-                        var newTemplateData = jalapeno.createNewTemplate(board_id, e.caller.screenTemplateData.screenProps);
+                        var newTemplateData = pepper.createNewTemplate(board_id, e.caller.screenTemplateData.screenProps);
                         var board_template_id = newTemplateData['board_template_id']
                         var viewers = newTemplateData['viewers'];
 
-                        self.m_selected_campaign_id = jalapeno.createCampaign('campaign');
-                        campaign_board_id = jalapeno.assignCampaignToBoard(self.m_selected_campaign_id, board_id);
+                        self.m_selected_campaign_id = pepper.createCampaign('campaign');
+                        campaign_board_id = pepper.assignCampaignToBoard(self.m_selected_campaign_id, board_id);
 
                         // set campaign name
                         var campaignName = BB.comBroker.getService(BB.SERVICES['CAMPAIGN_NAME_SELECTOR_VIEW']).getCampaignName();
-                        jalapeno.setCampaignRecord(self.m_selected_campaign_id, 'campaign_name', campaignName);
+                        pepper.setCampaignRecord(self.m_selected_campaign_id, 'campaign_name', campaignName);
+
+                        BB.comBroker.fire(BB.EVENTS.LOAD_CAMPAIGN_LIST);
 
                     } else {
 
@@ -180,27 +221,45 @@ define(['jquery', 'backbone', 'SequencerView', 'ChannelListView', 'StackView', '
                         // Add Timeline to an existing campaign
                         ////////////////////////////////////////////////
 
-                        campaign_board_id = jalapeno.getFirstBoardIDofCampaign(self.m_selected_campaign_id);
-                        board_id = jalapeno.getBoardFromCampaignBoard(campaign_board_id);
-                        var newTemplateData = jalapeno.createNewTemplate(board_id, e.caller.screenTemplateData.screenProps);
+                        campaign_board_id = pepper.getFirstBoardIDofCampaign(self.m_selected_campaign_id);
+                        board_id = pepper.getBoardFromCampaignBoard(campaign_board_id);
+                        var newTemplateData = pepper.createNewTemplate(board_id, e.caller.screenTemplateData.screenProps);
                         var board_template_id = newTemplateData['board_template_id']
                         var viewers = newTemplateData['viewers'];
+                        autoSelectFirstTimeline = false;
                     }
 
-                    campaign_timeline_id = jalapeno.createNewTimeline(self.m_selected_campaign_id);
-                    jalapeno.setCampaignTimelineSequencerIndex(self.m_selected_campaign_id, campaign_timeline_id, 0);
+                    campaign_timeline_id = pepper.createNewTimeline(self.m_selected_campaign_id);
+                    pepper.setCampaignTimelineSequencerIndex(self.m_selected_campaign_id, campaign_timeline_id, 0);
+                    pepper.setTimelineTotalDuration(campaign_timeline_id, '0');
 
-                    var campaign_timeline_board_template_id = jalapeno.assignTemplateToTimeline(campaign_timeline_id, board_template_id, campaign_board_id);
-                    var channels = jalapeno.createTimelineChannels(campaign_timeline_id, viewers);
-                    jalapeno.assignViewersToTimelineChannels(campaign_timeline_board_template_id, viewers, channels);
+                    var campaign_timeline_board_template_id = pepper.assignTemplateToTimeline(campaign_timeline_id, board_template_id, campaign_board_id);
+                    var channels = pepper.createTimelineChannels(campaign_timeline_id, viewers);
+                    pepper.assignViewersToTimelineChannels(campaign_timeline_board_template_id, viewers, channels);
 
                     self.m_timelines[campaign_timeline_id] = new Timeline({campaignTimelineID: campaign_timeline_id});
                     BB.comBroker.fire(BB.EVENTS.CAMPAIGN_TIMELINE_SELECTED, this, null, campaign_timeline_id);
-
                     BB.comBroker.getService(BB.SERVICES['SEQUENCER_VIEW']).reSequenceTimelines();
-                    self._loadSequencerFirstTimeline();
+
+                    if (autoSelectFirstTimeline) {
+                        self._loadSequencerFirstTimeline();
+                    } else {
+                        self.m_sequencerView.selectTimeline(campaign_timeline_id);
+                    }
                     return;
                 }
+            });
+        },
+
+        /**
+         Go back to campaign selection screen
+         @method _listenBackToCampaigns
+         **/
+        _listenBackToCampaigns: function () {
+            var self = this;
+            $(Elements.BACK_TO_CAMPAIGNS).on('click', function () {
+                BB.comBroker.getService(BB.SERVICES['PROPERTIES_VIEW']).resetPropertiesView();
+                self.options.stackView.slideToPage(Elements.CAMPAIGN_SELECTOR, 'left');
             });
         },
 
@@ -211,8 +270,43 @@ define(['jquery', 'backbone', 'SequencerView', 'ChannelListView', 'StackView', '
         _listenAddNewTimeline: function () {
             var self = this;
             $(Elements.ADD_NEW_TIMELINE_BUTTON).on('click', function () {
-                BB.comBroker.getService(BB.SERVICES['SCREEN_LAYOUT_SELECTOR_VIEW']).hidePreviousButton();
+                BB.comBroker.getService(BB.SERVICES['SCREEN_LAYOUT_SELECTOR_VIEW']).slideBackDirection('right');
                 self.options.stackView.slideToPage(Elements.SCREEN_LAYOUT_SELECTOR, 'left');
+            });
+        },
+
+        /**
+         Wire the UI for launching campaign preview
+         @method _listenCampaignPreview
+         **/
+        _listenCampaignPreview: function () {
+            var self = this;
+            $(Elements.CAMPAIGN_PREVIEW).on('click', function () {
+                var livePreview = BB.comBroker.getService(BB.SERVICES['LIVEPREVIEW']);
+                livePreview.launchCampaign(self.m_selected_campaign_id);
+            });
+        },
+
+        /**
+         Listen to select next channel clicj
+         @method _listenSelectNextChannel
+         **/
+        _listenSelectNextChannel: function () {
+            var self = this;
+            $(Elements.SELECT_NEXT_CHANNEL).on('click', function () {
+                BB.comBroker.getService(BB.SERVICES.STORYLINE).selectNextChannel();
+            });
+        },
+
+        /**
+         Wire the UI for launching specific timeline preview
+         @method _listenCampaignTimelinePreview
+         **/
+        _listenCampaignTimelinePreview: function () {
+            var self = this;
+            $(Elements.TIMELIME_PREVIEW).on('click', function () {
+                var livePreview = BB.comBroker.getService(BB.SERVICES['LIVEPREVIEW']);
+                livePreview.launchTimeline(self.m_selected_campaign_id, self.m_selected_timeline_id);
             });
         },
 
@@ -224,7 +318,24 @@ define(['jquery', 'backbone', 'SequencerView', 'ChannelListView', 'StackView', '
         _listenDelTimeline: function () {
             var self = this;
             $(Elements.REMOVE_TIMELINE_BUTTON).on('click', function (e) {
-                self._deleteTimeline(e, self);
+                var totalTimelines = pepper.getCampaignTimelines(self.m_selected_campaign_id).length;
+                if (totalTimelines == 1) {
+                    bootbox.dialog({
+                        message: $(Elements.MSG_CANT_DELETE_TIMELINE).text(),
+                        buttons: {
+                            danger: {
+                                label: $(Elements.MSG_BOOTBOX_OK).text(),
+                                className: "btn-danger"
+                            }
+                        }
+                    });
+                } else {
+                    bootbox.confirm($(Elements.MSG_BOOTBOX_SURE_REMOVE_TIMELINE).text(), function (i_result) {
+                        if (i_result == true) {
+                            $.proxy(self._deleteTimeline(), self);
+                        }
+                    });
+                }
             });
         },
 
@@ -244,19 +355,66 @@ define(['jquery', 'backbone', 'SequencerView', 'ChannelListView', 'StackView', '
         },
 
         /**
+         Listen screen template edit button
+         @method _listenScreenTemplateEdit
+         **/
+        _listenScreenTemplateEdit: function () {
+            var self = this;
+            $(Elements.EDIT_SCREEN_LAYOUT).on('click', function (e) {
+                var screenLayoutEditor = BB.comBroker.getService(BB.SERVICES.SCREEN_LAYOUT_EDITOR_VIEW);
+                var boardTemplateIDs = pepper.getTemplatesOfTimeline(self.m_selected_timeline_id);
+                screenLayoutEditor.selectView(self.m_selected_timeline_id, boardTemplateIDs[0]);
+            });
+        },
+
+        /**
          When a timeline is deleted, remove it from the local timelines hash and notify sequencer.
          @method _deleteTimeline
          @param {Event} e
          @param {Object} i_caller
          @return none
          **/
-        _deleteTimeline: function (e, i_caller) {
+        _deleteTimeline: function () {
             var self = this;
-            e.preventDefault();
-            e.stopImmediatePropagation();
             self.m_timelines[self.m_selected_timeline_id].deleteTimeline();
             delete self.m_timelines[self.m_selected_timeline_id];
             self._loadSequencerFirstTimeline();
+        },
+
+        /**
+         Listen for updates on changes in length of currently selected timeline through the pepper framework
+         @method _listenTimelineLengthChanged
+         **/
+        _listenTimelineLengthChanged: function () {
+            var self = this;
+            pepper.listen(Pepper.TIMELINE_LENGTH_CHANGED, $.proxy(self._updatedTimelinesLengthUI, self));
+        },
+
+        /**
+         Update UI of total timelines length on length changed
+         @method _updatedTimelinesLengthUI
+         **/
+        _updatedTimelinesLengthUI: function () {
+            var self = this;
+            var totalDuration = 0;
+            self.m_xdate = BB.comBroker.getService('XDATE');
+            $.each(self.m_timelines, function (timelineID) {
+                totalDuration = parseInt(pepper.getTimelineTotalDuration(timelineID)) + totalDuration;
+            });
+            var durationFormatted = self.m_xdate.clearTime().addSeconds(totalDuration).toString('HH:mm:ss');
+            $(Elements.TIMELINES_TOTAL_LENGTH).text(durationFormatted);
+        },
+
+        /**
+         Reset the module and settings
+         @method _restart
+         **/
+        _reset: function () {
+            var self = this;
+            self.m_timelines = {};
+            self.m_selected_timeline_id = -1;
+            self.m_selected_campaign_id = -1;
+            BB.comBroker.fire(BB.EVENTS.CAMPAIGN_RESET);
         },
 
         /**
@@ -270,14 +428,13 @@ define(['jquery', 'backbone', 'SequencerView', 'ChannelListView', 'StackView', '
         },
 
         /**
-         Set selected campaign, which we hold a reference to.
-         @method setSelectedCampaign
-         @param {Number} i_selected_campaign_id
-         @return none
+         Get currently selected timeline id for campaign
+         @method getSelectedTimeline
+         @return {Number} m_selected_timeline_id
          **/
-        setSelectedCampaign: function (i_selected_campaign_id) {
+        getSelectedTimeline: function () {
             var self = this;
-            self.m_selected_campaign_id = i_selected_campaign_id;
+            return self.m_selected_timeline_id;
         },
 
         /**
@@ -302,26 +459,33 @@ define(['jquery', 'backbone', 'SequencerView', 'ChannelListView', 'StackView', '
         },
 
         /**
-         Listen for updates on changes in length of currently selected timeline through the jalapeno framework
-         @method _listenTimelineLengthChanged
+         Duplicate a campaign_timeline including it's screen layout, channels and blocks
+         @method duplicateTimeline
+         @param {Number} i_playerData
+         @return {Number} Unique clientId.
          **/
-        _listenTimelineLengthChanged: function () {
+        duplicateTimeline: function (i_campaign_timeline_id, i_screenProps) {
+            return;
             var self = this;
-            $(jalapeno).on(Jalapeno.TIMELINE_LENGTH_CHANGED, $.proxy(self._updatedTimelineLengthUI, self));
-        },
+            var campaign_board_id = pepper.getFirstBoardIDofCampaign(self.m_selected_campaign_id);
+            var board_id = pepper.getBoardFromCampaignBoard(campaign_board_id);
+            var newTemplateData = pepper.createNewTemplate(board_id, i_screenProps);
+            var board_template_id = newTemplateData['board_template_id']
+            var viewers = newTemplateData['viewers'];
+            var campaign_timeline_id = pepper.createNewTimeline(self.m_selected_campaign_id);
+            pepper.setCampaignTimelineSequencerIndex(self.m_selected_campaign_id, campaign_timeline_id, 0);
+            pepper.setTimelineTotalDuration(campaign_timeline_id, '0');
 
-        /**
-         Update UI when timeline length changed, if event exists we pull duration from it, otherwise get it
-         frm jalapeno via selected_timeline_id
-         @method _updatedTimelineLengthUI
-         **/
-        _updatedTimelineLengthUI: function (e) {
-            var self = this;
-            self.m_xdate = BB.comBroker.getService('XDATE');
-            var duration = e ? e.edata : jalapeno.getTimelineTotalDuration(this.m_selected_timeline_id);
-            var durationFormated = self.m_xdate.clearTime().addSeconds(duration).toString('HH:mm:ss');
-            $(Elements.TIMELINE_TOTAL_LENGTH).text(durationFormated);
+            var campaign_timeline_board_template_id = pepper.assignTemplateToTimeline(campaign_timeline_id, board_template_id, campaign_board_id);
+            var channels = pepper.createTimelineChannels(campaign_timeline_id, viewers);
+            pepper.assignViewersToTimelineChannels(campaign_timeline_board_template_id, viewers, channels);
+
+            self.m_timelines[campaign_timeline_id] = new Timeline({campaignTimelineID: campaign_timeline_id});
+            BB.comBroker.fire(BB.EVENTS.CAMPAIGN_TIMELINE_SELECTED, this, null, campaign_timeline_id);
+            BB.comBroker.getService(BB.SERVICES['SEQUENCER_VIEW']).reSequenceTimelines();
+            self.m_sequencerView.selectTimeline(campaign_timeline_id);
         }
+
     });
 
     return CampaignView;

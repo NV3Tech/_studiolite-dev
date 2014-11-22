@@ -21,7 +21,7 @@ define(['jquery', 'backbone'], function ($, Backbone) {
                 if (globs['debug']) {
                     console = {};
                     console.log = function (m) {
-                        alert(m)
+                        alert('msg:' + m)
                     };
                 } else {
                     console = {};
@@ -46,6 +46,101 @@ define(['jquery', 'backbone'], function ($, Backbone) {
                     }
                 });
             })(Backbone.View);
+        },
+
+        /**
+         Prompt on application exit
+         @method promptOnExit
+         **/
+        promptOnExit: function () {
+            if (window.location.href.indexOf('dist') > -1) {
+                $(window).on('beforeunload', function () {
+                    return 'Did you save your work?'
+                });
+            }
+        },
+
+        /**
+         Load non primary CSS
+         @method loadCss
+         @param {String} i_url
+         **/
+        loadCss: function (i_url) {
+            var link = document.createElement("link");
+            link.type = "text/css";
+            link.rel = "stylesheet";
+            link.href = i_url;
+            document.getElementsByTagName("head")[0].appendChild(link);
+        },
+
+        /**
+         Force browser compatability
+         @method foreceBrowserCompatability
+         **/
+        forceBrowserCompatability: function () {
+
+
+
+            $.getJSON('https://galaxy.signage.me/WebService/getBrowserInfo.ashx?a=2&callback=?',
+                function (data) {
+
+                    //alert(data.version + ' ' + data.platform + ' ' + data.type + ' ' + data.name);
+
+                    // animated loader
+                    if (data.name.toLowerCase() == 'ie') {
+                        $(Elements.WAITS_SCREEN_ENTRY_APP).find('img').eq(1).remove();
+                    } else {
+                        $(Elements.WAITS_SCREEN_ENTRY_APP).find('img').eq(0).remove();
+                    }
+
+                    var failLevel = 0;
+                    require(['bootbox'], function (bootbox) {
+                        if (data.name.toLowerCase() == 'safari' && data.platform.toLowerCase() == 'winnt')
+                            failLevel = 2;
+                        if (data.name.toLowerCase() == 'ie' && parseInt(data.version) < 10)
+                            failLevel = 1;
+
+                        switch (failLevel) {
+                            case 0:
+                            {
+                                break
+                            }
+                            case 1:
+                            {
+                                bootbox.dialog({
+                                    message: $(Elements.MSG_BOOTBOX_OLD_BROWSER).text(),
+                                    buttons: {
+                                        danger: {
+                                            label: $(Elements.MSG_BOOTBOX_OK).text(),
+                                            className: "btn-danger",
+                                            callback: function () {
+                                            }
+                                        }
+                                    }
+                                });
+                                break
+                            }
+                            case 2:
+                            {
+                                bootbox.dialog({
+                                    message: $(Elements.MSG_BOOTBOX_OLD_BROWSER).text(),
+                                    buttons: {
+                                        danger: {
+                                            label: $(Elements.MSG_BOOTBOX_OK).text(),
+                                            className: "btn-danger",
+                                            callback: function () {
+                                                $('body').empty();
+                                                // window.location.replace("http://www.digitalsignage.com");
+                                            }
+                                        }
+                                    }
+                                });
+                                break
+                            }
+                        }
+                    });
+                }
+            );
         },
 
         /**
@@ -208,7 +303,7 @@ define(['jquery', 'backbone'], function ($, Backbone) {
                     dom.async = false;
                     if (!dom.loadXML(xml)) // parse error ..
 
-                        window.alert(dom.parseError.reason + dom.parseError.srcText);
+                        window.alert('alt ' + dom.parseError.reason + dom.parseError.srcText);
                 }
                 catch (e) {
                     dom = null;
@@ -423,6 +518,31 @@ define(['jquery', 'backbone'], function ($, Backbone) {
         },
 
         /**
+         Convert number or string to float with double precision
+         @method parseToFloatDouble
+         @param {Object} i_value
+         @return {Number}
+         **/
+        parseToFloatDouble: function (i_value) {
+            return parseFloat(parseFloat(i_value).toFixed(2));
+        },
+
+        /**
+         Returns the total unique members of an array
+         @method uniqueArray
+         @param {Array} i_array
+         @return {Number} total unique members
+         **/
+        uniqueArraySize: function (i_array) {
+            function onlyUnique(value, index, self) {
+                return self.indexOf(value) === index;
+            }
+
+            var a = i_array.filter(onlyUnique);
+            return a.length;
+        },
+
+        /**
          Check if a remote file exists
          @method remoteFileExits
          @param {String} url
@@ -440,6 +560,18 @@ define(['jquery', 'backbone'], function ($, Backbone) {
         },
 
         /**
+         Get specific param name from URL
+         @method function
+         @param {String} i_name
+         @return {String}
+         **/
+        getURLParameter: function (i_name) {
+            return decodeURIComponent(
+                (location.search.match(RegExp("[?|&]" + i_name + '=(.+?)(&|$)')) || [, null])[1]
+            );
+        },
+
+        /**
          Returns Epoch base time
          @method getEpochTime
          @return {Number}
@@ -448,8 +580,141 @@ define(['jquery', 'backbone'], function ($, Backbone) {
             var d = new Date();
             var n = d.getTime();
             return n;
-        }
+        },
 
+        /**
+         Decimal to hex converter
+         @method decimalToHex
+         @param {Number} d
+         @return {String} hex
+         **/
+        decimalToHex: function (d) {
+            var hex = Number(d).toString(16);
+            hex = "000000".substr(0, 6 - hex.length) + hex;
+            return hex;
+        },
+
+        /**
+         Hex to decimal converter
+         @method hexToDecimal
+         @param {String} h
+         @return {Number} decimal
+         **/
+        hexToDecimal: function (h) {
+            var h = h.replace(/#/gi, '');
+            return parseInt(h, 16);
+        },
+
+        /**
+         RGB color to hex converter
+         @method rgbToHex
+         @param {Number} rgb
+         @return {String} hex
+         **/
+        rgbToHex: function (rgb) {
+            function componentFromStr(numStr, percent) {
+                var num = Math.max(0, parseInt(numStr, 10));
+                return percent ?
+                    Math.floor(255 * Math.min(100, num) / 100) : Math.min(255, num);
+            }
+
+            var rgbRegex = /^rgb\(\s*(-?\d+)(%?)\s*,\s*(-?\d+)(%?)\s*,\s*(-?\d+)(%?)\s*\)$/;
+            var result, r, g, b, hex = "";
+            if ((result = rgbRegex.exec(rgb))) {
+                r = componentFromStr(result[1], result[2]);
+                g = componentFromStr(result[3], result[4]);
+                b = componentFromStr(result[5], result[6]);
+                hex = (0x1000000 + (r << 16) + (g << 8) + b).toString(16).slice(1);
+            }
+            return hex;
+        },
+
+        /**
+         Smart convert color (many) to decinal
+         @method colorToDecimal
+         @param {String} color
+         @return {Number} decimal
+         **/
+        colorToDecimal: function (color) {
+            if (color.match('rgb')) {
+                color = this.rgbToHex(color);
+                return this.hexToDecimal(color)
+            }
+            return this.hexToDecimal(color);
+        },
+
+        /**
+         Smart convert color (many) to hex
+         @method colorToHex
+         @param {String} color
+         @return {String} hex
+         **/
+        colorToHex: function (color) {
+            if (color.match('#')) {
+                return color;
+            }
+            if (color.match('rgb')) {
+                return '#' + this.rgbToHex(color);
+            }
+            return '#' + color;
+        },
+
+        /**
+         Capitilize first letter
+         @method capitaliseFirst
+         @param {String} string
+         @return {String} string
+         **/
+        capitaliseFirst: function (string) {
+            return string.charAt(0).toUpperCase() + string.slice(1).toLowerCase();
+        },
+
+        /**
+         Run a function n number of times with sleep in between
+         @method setIntervalTimes
+         @param {Function} i_func
+         @param {Number} i_sleep
+         @param {Number} i_timesRun
+         **/
+        setIntervalTimes: function (i_func, i_sleep, i_timesRun) {
+            var timesRun = 0;
+            var interval = setInterval(function () {
+                timesRun += 1;
+                if (timesRun === i_timesRun) {
+                    clearInterval(interval);
+                }
+                i_func();
+            }, i_sleep);
+        },
+
+
+        /**
+         Returns this model's attributes as...
+         @method padZeros
+         @param {Number} n value
+         @param {Number} width pre-pad width
+         @param {Number} z negative as in '-'
+         @return {Number} zero padded string
+         **/
+        padZeros: function (n, width, z) {
+            z = z || '0';
+            n = n + '';
+            return n.length >= width ? n : new Array(width - n.length + 1).join(z) + n;
+        },
+
+        /**
+         Remove characters that a problemtaic to app / js
+         @method cleanProbCharacters
+         @param {String} string
+         @return {String} string
+         **/
+        cleanProbCharacters: function (i_string) {
+            i_string = i_string.replace(/'/ig, "`");
+            i_string = i_string.replace(/&/ig, "and");
+            i_string = i_string.replace(/</ig, "(");
+            i_string = i_string.replace(/>/ig, ")");
+            return i_string;
+        }
     });
 
     return Lib;

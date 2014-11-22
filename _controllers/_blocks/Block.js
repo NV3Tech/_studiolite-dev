@@ -1,5 +1,5 @@
 /**
- This base class for all Blocks / players which reside on the timeline_channel or inside scenes.
+ This base class for all the Blocks / players which reside on the timeline_channel or inside scenes.
  The base class implements basic timeline and scene interfaces including the management the properties UI.
  @class Block
  @constructor
@@ -7,42 +7,60 @@
  @param {string} i_block_id block / player id, only required if block inserted onto channel_timeline
  @return none
  **/
-define(['jquery', 'backbone', 'Knob'], function ($, Backbone, Knob) {
+define(['jquery', 'backbone'], function ($) {
 
     /**
-     block.PLACEMENT_SCENE indicates the insertion is inside a Scene
-     @property Block.PLACEMENT_SCENE
+     Quiet mode, don't announce
+     @property BB.CONSTS.NO_NOTIFICATION
      @static
      @final
      @type String
      */
-    BB.CONSTS.PLACEMENT_SCENE = 'PLACEMENT_SCENE';
+    BB.CONSTS.NO_NOTIFICATION = true;
 
     /**
-     block.PLACEMENT_CHANNEL indicates the insertion is on the timeline_channel
-     @property Block.PLACEMENT_CHANNEL
-     @static
-     @final
-     @type String
-     */
-    BB.CONSTS.PLACEMENT_CHANNEL = 'PLACEMENT_CHANNEL';
-
-    /**
-     event fires when block on timeline_channel is selected
-     @event Block.BLOCK_ON_CHANNEL_SELECTED
+     event fires when scene block was changed so scene needs to be re-rendered
+     @event Block.SCENE_BLOCK_CHANGE
      @param {this} caller
      @param {String} selected block_id
      **/
-    BB.EVENTS.BLOCK_ON_CHANNEL_SELECTED = 'BLOCK_ON_CHANNEL_SELECTED';
+    BB.EVENTS.SCENE_BLOCK_CHANGE = 'SCENE_BLOCK_CHANGE';
 
     /**
-     event fires when block length is changing (requesting a change), normally by a knob property widget
-     @event Block.BLOCK_LENGTH_CHANGING
-     @param {object} this
-     @param {object} caller the firing knob element
-     @param {number} value the knob's position value (hours / minutes / seconds)
+     event fires when block border changed so scene needs to be re-rendered
+     @event Block.BLOCK_BORDER_CHANGE
+     @param {this} caller
+     @param {String} selected block_id
      **/
-    BB.EVENTS.BLOCK_LENGTH_CHANGING = 'BLOCK_LENGTH_CHANGING';
+    BB.EVENTS.BLOCK_BORDER_CHANGE = 'BLOCK_BORDER_CHANGE';
+
+    /**
+     event fires when scene blocks freshly re-rendered onto the scene canvas so we need to update the UI of ALL blocks
+     normally occurs after a Block.SCENE_BLOCK_CHANGE event
+     @event Block.SCENE_BLOCKS_RENDERED
+     @param {this} caller
+     @param {String} selected block_id
+     **/
+    BB.EVENTS.SCENE_BLOCKS_RENDERED = 'SCENE_BLOCKS_RENDERED';
+
+    /**
+     event fires when block is selected
+     @event Block.BLOCK_SELECTED
+     @param {this} caller
+     @param {String} selected block_id
+     **/
+    BB.EVENTS.BLOCK_SELECTED = 'BLOCK_SELECTED';
+
+    /**
+     Custom event fired when a block state changes
+     @event LOCK_CHANGED
+     @param {This} caller
+     @param {Self} context caller
+     @param {Event}
+     @static
+     @final
+     **/
+    BB.EVENTS.LOCK_CHANGED = 'LOCK_CHANGED';
 
     var Block = BB.Controller.extend({
 
@@ -51,70 +69,482 @@ define(['jquery', 'backbone', 'Knob'], function ($, Backbone, Knob) {
          @method initialize
          **/
         initialize: function (options) {
-
             var self = this;
-            this.m_placement = options.i_placement;
-            this.m_block_id = options.i_block_id;
-            this.m_selected = false;
+            self.m_placement = options.i_placement;
+            self.m_block_id = options.i_block_id;
+            self.m_sceneID = options.i_scene_player_data_id;
+            self.m_blockType = options.blockType;
+            self.m_selected = false;
+            self.m_minSize = {w: 50, h: 50};
+            self.m_blockName = BB.PepperHelper.getBlockBoilerplate(self.m_blockType).name;
+            self.m_blockAcronym = BB.PepperHelper.getBlockBoilerplate(self.m_blockType).acronym;
+            self.m_blockDescription = BB.PepperHelper.getBlockBoilerplate(self.m_blockType).description;
+            self.m_blockIcon = BB.PepperHelper.getBlockBoilerplate(self.m_blockType).icon;
+            self.m_blockFontAwesome = BB.PepperHelper.getBlockBoilerplate(self.m_blockType).fontAwesome;
+            self.m_blockSvg = BB.PepperHelper.getBlockBoilerplate(self.m_blockType).svg;
+            self.m_resourceID = undefined;
+            self.m_blockProperty = BB.comBroker.getService(BB.SERVICES['BLOCK_PROPERTIES']);
 
-            switch (this.m_placement) {
+            self._listenAlphaChange();
+            self._listenToggleLock();
+            self._listenGradientChange();
+            self._listenGradientColorPickerClosed();
+            self._listenBackgroundStateChange();
+            self._listenBorderStateChange();
+            self._listenBorderColorChange();
+            self._listenBlockSelected();
+            self._onBlockLengthChanged();
+        },
 
-                case BB.CONSTS.PLACEMENT_CHANNEL:
-                {
-                    this.m_property = BB.comBroker.getService(BB.SERVICES.PROPERTIES_VIEW);
+        /**
+         Init the sub properties panel for a block
+         @method _initSubPanel
+         @param {String} i_panel
+         **/
+        _initSubPanel: function (i_panel) {
+            var self = this;
+            self.m_blockProperty.initSubPanel(i_panel);
+        },
 
-                    self._onTimelineChannelBlockSelected();
-                    self._onTimelineChannelBlockLengthChanged();
-                    var initiated = self.m_property.initPanel(Elements.BLOCK_PROPERTIES, true);
-                    if (initiated)
-                        self._propLengthKnobsInit();
-                    break;
-                }
-                case BB.CONSTS.PLACEMENT_SCENE:
-                {
-                    break;
-                }
+        /**
+         Bring into view a sub properties panel of this block
+         @method _viewSubPanel
+         @param {String} i_panel
+         **/
+        _viewSubPanel: function (i_panel) {
+            var self = this;
+            self.m_blockProperty.viewSubPanel(i_panel);
+        },
+
+        /**
+         On changes in msdb model updated UI common lock properties
+         @method _fabricLock
+         **/
+        _fabricLock: function () {
+            var self = this;
+            var domPlayerData = self._getBlockPlayerData();
+            var locked = $(domPlayerData).attr('locked');
+            if (_.isUndefined(locked) || locked == '0') {
+                locked = false;
+            } else {
+                locked = true;
+            }
+            self.lockMovementX = locked;
+            self.lockMovementY = locked;
+            //self.lockScalingX = locked; self.lockScalingY = locked; self.lockUniScaling = locked; self.lockRotation = locked;
+            if (!self.m_selected)
+                return;
+            var dimensionProps = BB.comBroker.getService(BB.SERVICES['DIMENSION_PROPS_LAYOUT']);
+            if (_.isUndefined(dimensionProps))
+                return;
+            dimensionProps.setLock(locked);
+        },
+
+        /**
+         Toggle lock status
+         @method _toggleLock
+         @param {xml} i_domPlayerData
+         **/
+        _listenToggleLock: function () {
+            var self = this;
+            self._toggleLock = function (e) {
+                if (!self.m_selected)
+                    return;
+                self.lockMovementX = e.edata;
+                self.lockMovementY = e.edata;
+                //self.lockScalingX = e.edata; self.lockScalingY = e.edata; self.lockUniScaling = e.edata; self.lockRotation = e.edata;
+                var v = e.edata == true ? 1 : 0;
+                var domPlayerData = self._getBlockPlayerData();
+                $(domPlayerData).attr('locked', v);
+                self._setBlockPlayerData(domPlayerData, BB.CONSTS.NO_NOTIFICATION);
+            };
+            BB.comBroker.listenWithNamespace(BB.EVENTS.LOCK_CHANGED, self, self._toggleLock);
+        },
+
+
+        /**
+         Listen to changes in Alpha UI properties selection and update msdb
+         @method _listenAlphaChange
+         **/
+        _listenAlphaChange: function () {
+            var self = this;
+            self._alphaChanged = _.debounce(function (e) {
+                if (!self.m_selected)
+                    return;
+                var alpha = e.edata;
+                var domPlayerData = self._getBlockPlayerData();
+                var data = $(domPlayerData).find('Data').eq(0);
+                var xSnippet = $(data).find('Appearance').eq(0);
+                $(xSnippet).attr('alpha', alpha);
+                self._setBlockPlayerData(domPlayerData);
+            }, 100);
+            BB.comBroker.listenWithNamespace(BB.EVENTS.ALPHA_CHANGED, self, self._alphaChanged);
+        },
+
+        /**
+         On changes in msdb model updated UI common alpha properties
+         @method _alphaPopulate
+         @param {Number} i_playerData
+         @return {Number} Unique clientId.
+         **/
+        _alphaPopulate: function () {
+            var self = this;
+            var domPlayerData = self._getBlockPlayerData();
+            var data = $(domPlayerData).find('Data').eq(0);
+            var xSnippet = $(data).find('Appearance').eq(0);
+            var alpha = $(xSnippet).attr('alpha');
+            alpha = parseFloat(alpha) * 100;
+            $(Elements.BLOCK_ALPHA_SLIDER).val(alpha);
+        },
+
+        /**
+         Enable gradient background UI
+         @method _enableBgSelection
+         **/
+        _enableBgSelection: function () {
+            var self = this;
+            $(Elements.SHOW_BACKGROUND).prop('checked', true);
+            $(Elements.BG_COLOR_SOLID_SELECTOR).hide();
+            $(Elements.BG_COLOR_GRADIENT_SELECTOR).show();
+        },
+
+        /**
+         Enable gradient background UI
+         @method _enableBgSelection
+         **/
+        _enableBorderSelection: function () {
+            var self = this;
+            $(Elements.SHOW_BORDER).prop('checked', true);
+            $(Elements.BLOCK_BORDER_WRAP).show();
+        },
+
+        /**
+         On changes in msdb model updated UI common gradient background properties
+         @method _bgPropsPopulate
+         @param {Number} i_playerData
+         @return {Number} Unique clientId.
+         **/
+        _bgPropsPopulate: function () {
+            var self = this;
+            var gradient = $(Elements.BG_COLOR_GRADIENT_SELECTOR).data("gradientPicker-sel");
+            // gradient.changeFillDirection("top"); /* change direction future support */
+            gradient.removeAllPoints();
+            var domPlayerData = self._getBlockPlayerData();
+            var xSnippet = self._findGradientPoints(domPlayerData);
+            if (xSnippet.length > 0) {
+                self._enableBgSelection();
+                var points = $(xSnippet).find('Point');
+                $.each(points, function (i, point) {
+                    var pointColor = BB.lib.decimalToHex($(point).attr('color'));
+                    var pointMidpoint = (parseInt($(point).attr('midpoint')) / 250);
+                    gradient.addPoint(pointMidpoint, pointColor, true);
+                });
+            } else {
+                self._bgPropsUnpopulate();
             }
         },
 
         /**
+         On changes in msdb model updated UI common border properties
+         @method _borderPropsPopulate
+         **/
+        _borderPropsPopulate: function () {
+            var self = this;
+            var domPlayerData = self._getBlockPlayerData();
+            var xSnippet = self._findBorder(domPlayerData);
+            if (xSnippet.length > 0) {
+                self._enableBorderSelection();
+                var color = $(xSnippet).attr('borderColor');
+                color = '#' + BB.lib.decimalToHex(color);
+                self.m_blockProperty.setBorderBlockPropColorPicker(color);
+            } else {
+                self._borderPropsUnpopulate();
+            }
+        },
+
+        /**
+         Disable the gradient background UI
+         @method _bgPropsUnpopulate
+         **/
+        _bgPropsUnpopulate: function () {
+            var self = this;
+            $(Elements.SHOW_BACKGROUND).prop('checked', false);
+            $(Elements.BG_COLOR_GRADIENT_SELECTOR).hide();
+            $(Elements.BG_COLOR_SOLID_SELECTOR).hide();
+            var domPlayerData = self._getBlockPlayerData();
+            var gradientPoints = self._findGradientPoints(domPlayerData);
+            $(gradientPoints).empty();
+        },
+
+        /**
+         Disable the border UI
+         @method _borderPropsUnpopulate
+         **/
+        _borderPropsUnpopulate: function () {
+            var self = this;
+            $(Elements.SHOW_BORDER).prop('checked', false);
+            $(Elements.BLOCK_BORDER_WRAP).hide();
+            var domPlayerData = self._getBlockPlayerData();
+            var border = self._findBorder(domPlayerData);
+            $(border).empty();
+        },
+
+        /**
+         Toggle block background on UI checkbox selection
+         @method _toggleBackgroundColorHandler
+         @param {event} e
+         **/
+        _toggleBackgroundColorHandler: function (e) {
+            var self = this;
+            if (!self.m_selected)
+                return;
+
+            var xBgSnippet = undefined;
+            var domPlayerData = self._getBlockPlayerData();
+            var checked = $(e.target).prop('checked') == true ? 1 : 0;
+            if (checked) {
+                self._enableBgSelection();
+                xBgSnippet = BB.PepperHelper.getCommonBackgroundXML();
+                var data = $(domPlayerData).find('Data').eq(0);
+                var bgData = $(data).find('Background');
+                if (bgData.length > 0 && !_.isUndefined(bgData.replace)) { // ie bug workaround
+                    bgData.replace($(xBgSnippet));
+                } else {
+                    $(data).append($(xBgSnippet));
+                }
+                var player_data = pepper.xmlToStringIEfix(domPlayerData);
+                domPlayerData = $.parseXML(player_data);
+                self._setBlockPlayerData(domPlayerData, BB.CONSTS.NO_NOTIFICATION);
+                self._bgPropsPopulate();
+                self._announceBlockChanged();
+            } else {
+                var xSnippet = self._findBackground(domPlayerData);
+                $(xSnippet).remove();
+                self._bgPropsUnpopulate();
+                self._setBlockPlayerData(domPlayerData);
+            }
+        },
+
+        /**
+         Toggle block background on UI checkbox selection
+         @method _toggleBackgroundColorHandler
+         @param {event} e
+         **/
+        _toggleBorderHandler: function (e) {
+            var self = this;
+            if (!self.m_selected)
+                return;
+
+            var xBgSnippet = undefined;
+            var domPlayerData = self._getBlockPlayerData();
+            var checked = $(e.target).prop('checked') == true ? 1 : 0;
+            if (checked) {
+                self._enableBorderSelection();
+                xBgSnippet = BB.PepperHelper.getCommonBorderXML();
+                var data = $(domPlayerData).find('Data').eq(0);
+                var bgData = self._findBorder(data);
+                if (bgData.length > 0 && !_.isUndefined(bgData.replace)) { // ie bug workaround
+                    bgData.replace($(xBgSnippet));
+                } else {
+                    $(data).append($(xBgSnippet));
+                }
+                var player_data = pepper.xmlToStringIEfix(domPlayerData);
+                domPlayerData = $.parseXML(player_data);
+                self._setBlockPlayerData(domPlayerData, BB.CONSTS.NO_NOTIFICATION);
+                self._borderPropsPopulate();
+                self._announceBlockChanged();
+            } else {
+                var xSnippet = self._findBorder(domPlayerData);
+                $(xSnippet).remove();
+                self._borderPropsUnpopulate();
+                self._setBlockPlayerData(domPlayerData);
+            }
+        },
+
+        /**
+         Listen to change in background enable / disable states
+         @method _listenBackgroundStateChange
+         **/
+        _listenBackgroundStateChange: function () {
+            var self = this;
+            self.m_proxyToggleBg = $.proxy(self._toggleBackgroundColorHandler, self);
+            self.m_proxyToggleBgKey = _.uniqueId('click.');
+            $(Elements.SHOW_BACKGROUND).on(self.m_proxyToggleBgKey, self.m_proxyToggleBg);
+        },
+
+        /**
+         Listen to change in background enable / disable states
+         @method _listenBackgroundStateChange
+         **/
+        _listenBorderStateChange: function () {
+            var self = this;
+            self.m_proxyToggleBorder = $.proxy(self._toggleBorderHandler, self);
+            self.m_proxyToggleBorderKey = _.uniqueId('click.');
+            $(Elements.SHOW_BORDER).on(self.m_proxyToggleBorderKey, self.m_proxyToggleBorder);
+        },
+
+        /**
+         Update a block's player_data with new gradient background
+         @method _listenGradientChange
+         **/
+        _listenGradientChange: function () {
+            var self = this;
+            BB.comBroker.listenWithNamespace(BB.EVENTS.GRADIENT_COLOR_CHANGED, self, function (e) {
+                if (!self.m_selected)
+                    return;
+                var points = e.edata.points;
+                var styles = e.edata.styles;
+                if (points.length == 0)
+                    return;
+                var domPlayerData = self._getBlockPlayerData();
+                var gradientPoints = self._findGradientPoints(domPlayerData);
+                $(gradientPoints).empty();
+                var pointsXML = "";
+                for (var i = 0; i < points.length; ++i) {
+                    var pointMidpoint = (parseInt(points[i].position * 250));
+                    var color = BB.lib.colorToDecimal(points[i].color);
+                    var xPoint = '<Point color="' + color + '" opacity="1" midpoint="' + pointMidpoint + '" />';
+                    // log(xPoint);
+                    // $(gradientPoints).append(xPoint);
+                    pointsXML += xPoint;
+                }
+                // $(domPlayerData).find('GradientPoints').html(pointsXML);
+                var xmlString = (new XMLSerializer()).serializeToString(domPlayerData);
+                xmlString = xmlString.replace(/<GradientPoints[ ]*\/>/, '<GradientPoints>' + pointsXML + '</GradientPoints>');
+                domPlayerData = $.parseXML(xmlString);
+                self._setBlockPlayerData(domPlayerData, BB.CONSTS.NO_NOTIFICATION);
+            });
+        },
+
+        /**
+         Update a block's player_data with new border background
+         @method _listenBorderColorChange
+         **/
+        _listenBorderColorChange: function () {
+            var self = this;
+            BB.comBroker.listenWithNamespace(BB.EVENTS.BLOCK_BORDER_CHANGE, self, function (e) {
+                if (!self.m_selected)
+                    return;
+                var color = e.edata;
+                var domPlayerData = self._getBlockPlayerData();
+                var border = self._findBorder(domPlayerData);
+                $(border).attr('borderColor', BB.lib.hexToDecimal(color));
+                self._setBlockPlayerData(domPlayerData);
+            });
+        },
+
+        /**
+         Update a block's player_data with new gradient background
+         @method _listenGradientChange
+         **/
+        _listenGradientColorPickerClosed: function () {
+            var self = this;
+            BB.comBroker.listenWithNamespace(BB.EVENTS.GRADIENT_COLOR_CLOSED, self, function (e) {
+                if (!self.m_selected)
+                    return;
+                var domPlayerData = self._getBlockPlayerData();
+                self._setBlockPlayerData(domPlayerData);
+            });
+        },
+
+        /**
+         Find the background section in player_data for selected block
+         @method _findBackground
+         @param  {object} i_domPlayerData
+         @return {Xml} xSnippet
+         **/
+        _findBackground: function (i_domPlayerData) {
+            var self = this;
+            var xSnippet = $(i_domPlayerData).find('Background');
+            return xSnippet;
+        },
+
+        /**
+         Find the border section in player_data for selected block
+         @method _findBorder
+         @param  {object} i_domPlayerData
+         @return {Xml} xSnippet
+         **/
+        _findBorder: function (i_domPlayerData) {
+            var self = this;
+            return $(i_domPlayerData).find('Border');
+        },
+
+        /**
+         Find the gradient blocks in player_data for selected block
+         @method _findGradientPoints
+         @param  {object} i_domPlayerData
+         @return {Xml} xSnippet
+         **/
+        _findGradientPoints: function (i_domPlayerData) {
+            var self = this;
+            var xSnippet = $(i_domPlayerData).find('GradientPoints');
+            return xSnippet;
+        },
+
+        /**
          Notify this object that it has been selected so it can populate it's own the properties box etc
-         The function triggers from the BLOCK_ON_CHANNEL_SELECTED event.
-         @method _onTimelineChannelBlockSelected
+         The function triggers from the BLOCK_SELECTED event.
+         @method _listenBlockSelected
          @return none
          **/
-        _onTimelineChannelBlockSelected: function () {
+        _listenBlockSelected: function () {
             var self = this;
-
-            BB.comBroker.listenWithNamespace(BB.EVENTS.BLOCK_ON_CHANNEL_SELECTED, self, function (e) {
+            BB.comBroker.listenWithNamespace(BB.EVENTS.BLOCK_SELECTED, self, function (e) {
                 var blockID = e.edata;
                 if (self.m_block_id != blockID) {
-                    self._onTimelineChannelBlockDeselected();
+                    self.m_selected = false;
                     return;
                 }
+                self._onBlockSelected();
+            });
+        },
 
-                self.m_selected = true;
-                // log('block selected ' + self.m_block_id);
+        /**
+         When a block is selected, find out where is it placed (scene/ channel) and change props accordingly
+         @method _onBlockSelected
+         **/
+        _onBlockSelected: function () {
+            var self = this;
+            self.m_selected = true;
+            self.m_blockProperty.viewPanel(Elements.BLOCK_PROPERTIES);
+            self._updateTitle();
+            self._updateTitleTab();
+            self._alphaPopulate();
+            self._fabricLock();
+            self._borderPropsPopulate();
+            self._bgPropsPopulate();
 
-                switch (self.m_placement) {
-                    case BB.CONSTS.PLACEMENT_CHANNEL:
-                    {
-                        self.m_property.viewPanel(Elements.BLOCK_PROPERTIES);
-                        self._updateTitle();
-                        self._updateBlockLength();
-                        break;
-                    }
-                    // Future support
-                    case BB.CONSTS.PLACEMENT_SCENE:
-                    {
-                        break;
-                    }
+            log('block selected ' + self.m_block_id);
+
+            switch (self.m_placement) {
+                case BB.CONSTS.PLACEMENT_CHANNEL:
+                {
+                    $(Elements.CHANNEL_BLOCK_PROPS).show();
+                    $(Elements.SCENE_BLOCK_PROPS).hide();
+                    self._updateBlockLength();
+                    break;
                 }
 
-                if (self._loadCommonProperties)
-                    self._loadCommonProperties();
+                case BB.CONSTS.PLACEMENT_SCENE:
+                {
+                    $(Elements.CHANNEL_BLOCK_PROPS).hide();
+                    $(Elements.SCENE_BLOCK_PROPS).show();
+                    self._updateBlockDimensions();
+                    break;
+                }
 
-            });
+                case BB.CONSTS.PLACEMENT_IS_SCENE:
+                {
+                    $(Elements.CHANNEL_BLOCK_PROPS).hide();
+                    $(Elements.SCENE_BLOCK_PROPS).hide();
+                    self._updateBlockLength();
+                    break;
+                }
+            }
+
+            if (self._loadBlockSpecificProps)
+                self._loadBlockSpecificProps();
         },
 
         /**
@@ -128,13 +558,12 @@ define(['jquery', 'backbone', 'Knob'], function ($, Backbone, Knob) {
         },
 
         /**
-         Reset a timeline_channel block if it is no longer the chosen one
-         @method _onTimelineChannelBlockDeselected
-         @return none
+         Update the title of the selected tab properties element
+         @method m_blockAcronym
          **/
-        _onTimelineChannelBlockDeselected: function () {
+        _updateTitleTab: function () {
             var self = this;
-            self.m_selected = false;
+            $(Elements.BLOCK_SUBPROPERTIES_TITLE).text(self.m_blockAcronym);
         },
 
         /**
@@ -144,23 +573,54 @@ define(['jquery', 'backbone', 'Knob'], function ($, Backbone, Knob) {
          **/
         _updateBlockLength: function () {
             var self = this;
-            var lengthData = jalapeno.getBlockTimelineChannelBlockLength(self.m_block_id);
+            var lengthData;
+
+            switch (self.m_placement) {
+                case BB.CONSTS.PLACEMENT_CHANNEL:
+                {
+                    lengthData = pepper.getBlockTimelineChannelBlockLength(self.m_block_id);
+                    break;
+                }
+                case BB.CONSTS.PLACEMENT_IS_SCENE:
+                {
+                    lengthData = pepper.getSceneDuration(self.m_block_id);
+                    break;
+                }
+            }
             $(Elements.BLOCK_LENGTH_HOURS).val(lengthData.hours).trigger('change');
             $(Elements.BLOCK_LENGTH_MINUTES).val(lengthData.minutes).trigger('change');
             $(Elements.BLOCK_LENGTH_SECONDS).val(lengthData.seconds).trigger('change');
         },
 
         /**
+         Update the position of the block when placed inside a scene
+         @method _updateBlockDimensions
+         **/
+        _updateBlockDimensions: function () {
+            var self = this;
+            var dimensionProps = BB.comBroker.getService(BB.SERVICES['DIMENSION_PROPS_LAYOUT']);
+            var values = {
+                y: self['canvasScale'] == 1 ? self.top : self.top * (1 / self['canvasScale']),
+                x: self['canvasScale'] == 1 ? self.left : self.left * (1 / self['canvasScale']),
+                w: self['canvasScale'] == 1 ? self.width : self.width * (1 / self['canvasScale']),
+                h: self['canvasScale'] == 1 ? self.height : self.height * (1 / self['canvasScale']),
+                a: self.angle
+            };
+            dimensionProps.setValues(values);
+        },
+
+        /**
          Take action when block length has changed which is triggered by the BLOCK_LENGTH_CHANGING event
-         @method _onTimelineChannelBlockLengthChanged
+         @method _onBlockLengthChanged
          @return none
          **/
-        _onTimelineChannelBlockLengthChanged: function () {
+        _onBlockLengthChanged: function () {
             var self = this;
 
             BB.comBroker.listenWithNamespace(BB.EVENTS.BLOCK_LENGTH_CHANGING, this, function (e) {
 
                 if (self.m_selected) {
+
                     var hours = $(Elements.BLOCK_LENGTH_HOURS).val();
                     var minutes = $(Elements.BLOCK_LENGTH_MINUTES).val();
                     var seconds = $(Elements.BLOCK_LENGTH_SECONDS).val();
@@ -183,81 +643,265 @@ define(['jquery', 'backbone', 'Knob'], function ($, Backbone, Knob) {
                         }
                     }
                     // log('upd: ' + self.m_block_id + ' ' + hours + ' ' + minutes + ' ' + seconds);
-                    jalapeno.setBlockTimelineChannelBlockLength(self.m_block_id, hours, minutes, seconds);
+                    if (parseInt(hours) == 0 && parseInt(minutes) == 0 && parseInt(seconds) < 5)
+                        return;
+
+                    switch (self.m_placement) {
+                        case BB.CONSTS.PLACEMENT_CHANNEL:
+                        {
+                            pepper.setBlockTimelineChannelBlockLength(self.m_block_id, hours, minutes, seconds);
+                            break;
+                        }
+                        case BB.CONSTS.PLACEMENT_IS_SCENE:
+                        {
+                            log('upd: ' + self.m_block_id + ' ' + hours + ' ' + minutes + ' ' + seconds);
+                            pepper.setSceneDuration(self.m_block_id, hours, minutes, seconds);
+                            break;
+                        }
+                    }
                 }
             });
         },
 
+        /**
+         Announce that this block has changed
+         @method _announceBlockChanged
+         @param {Number} i_player_data
+         **/
+        _announceBlockChanged: function () {
+            var self = this;
+            BB.comBroker.fire(BB.EVENTS['SCENE_BLOCK_CHANGE'], self, null, self.m_block_id);
+        },
 
         /**
-         Create the block length knobs so a user can set the length of the block with respect to timeline_channel
-         @method _propLengthKnobsInit
+         Update the msdb for the block with new values inside its player_data
+         @method _setBlockPlayerData
+         @param {Object} i_xmlDoc
+         **/
+        _setBlockPlayerData: function (i_xmlDoc, i_noNotify) {
+            var self = this;
+            var player_data = (new XMLSerializer()).serializeToString(i_xmlDoc);
+            switch (self.m_placement) {
+                case BB.CONSTS.PLACEMENT_CHANNEL:
+                {
+                    pepper.setCampaignTimelineChannelPlayerRecord(self.m_block_id, 'player_data', player_data);
+                    break;
+                }
+                case BB.CONSTS.PLACEMENT_SCENE:
+                {
+                    pepper.setScenePlayerdataBlock(self.m_sceneID, self.m_block_id, player_data);
+                    if (!i_noNotify)
+                        self._announceBlockChanged();
+                    break;
+                }
+                case BB.CONSTS.PLACEMENT_IS_SCENE:
+                {
+                    pepper.setScenePlayerData(self.m_block_id, player_data);
+                    if (!i_noNotify)
+                        self._announceBlockChanged();
+                    break;
+                }
+            }
+        },
+
+        /**
+         Get the XML player data of a block, depending where its placed
+         @method _getBlockPlayerData
+         @return {Object} player data of block (aka player) parsed as DOM
+         **/
+        _getBlockPlayerData: function () {
+            var self = this;
+            var recBlock = undefined;
+
+            switch (self.m_placement) {
+
+                case BB.CONSTS.PLACEMENT_CHANNEL:
+                {
+                    recBlock = pepper.getCampaignTimelineChannelPlayerRecord(self.m_block_id);
+                    return $.parseXML(recBlock['player_data']);
+                    break;
+                }
+
+                case BB.CONSTS.PLACEMENT_SCENE:
+                {
+                    return pepper.getScenePlayerdataBlock(self.m_sceneID, self.m_block_id);
+                    break;
+                }
+            }
+        },
+
+        /**
+         Delete block is a private method that is always called regardless if instance has
+         been inherited or not. Used for releasing memory for garbage collector.
+         @method _deleteBlock
          @return none
          **/
-        _propLengthKnobsInit: function () {
+        _deleteBlock: function () {
+            var self = this;
+            pepper.removeBlockFromTimelineChannel(self.m_block_id);
+            BB.comBroker.stopListenWithNamespace(BB.EVENTS.BLOCK_SELECTED, self);
+            BB.comBroker.stopListenWithNamespace(BB.EVENTS.BLOCK_LENGTH_CHANGING, self);
+            BB.comBroker.stopListenWithNamespace(BB.EVENTS.GRADIENT_COLOR_CHANGED, self);
+            BB.comBroker.stopListenWithNamespace(BB.EVENTS.GRADIENT_COLOR_CLOSED, self);
+            BB.comBroker.stopListenWithNamespace(BB.EVENTS.BLOCK_BORDER_CHANGE, self);
+            BB.comBroker.stopListenWithNamespace(BB.EVENTS.ALPHA_CHANGED, self);
+            BB.comBroker.stopListenWithNamespace(BB.EVENTS.LOCK_CHANGED, self);
+            $(Elements.SHOW_BACKGROUND).off(self.m_proxyToggleBgKey, self.m_proxyToggleBg);
+            $(Elements.SHOW_BORDER).off(self.m_proxyToggleBorderKey, self.m_proxyToggleBorder);
+
+            if (self.off != undefined)
+                self.off('modified');
+
+            if (self.m_sceneSelectedHandler)
+                self.m_canvas.off('object:selected', self.m_sceneSelectedHandler);
+
+            $.each(self, function (k) {
+                self[k] = undefined;
+            });
+        },
+
+        /**
+         Fabricate alpha to canvas
+         @method _fabricAlpha
+         @param {Object} i_domPlayerData
+         **/
+        _fabricAlpha: function (i_domPlayerData) {
+            var self = this;
+            var appearance = $(i_domPlayerData).find('Appearance');
+            var opacity = $(appearance).attr('alpha');
+            self.setOpacity(opacity);
+        },
+
+        /**
+         Fabricate color points to canvas
+         @method _fabricColorPoints
+         @param {xml} i_domPlayerData
+         **/
+        _fabricColorPoints: function (i_domPlayerData) {
+            var self = this;
+            var gradientPoints = $(i_domPlayerData).find('GradientPoints');
+            var points = $(gradientPoints).find('Point');
+            var colorStops = {}
+            _.each(points, function (point) {
+                var color = '#' + BB.lib.decimalToHex($(point).attr('color'));
+                var offset = $(point).attr('midpoint');
+                offset = offset / 250;
+                colorStops[offset] = color;
+            });
+            return colorStops;
+        },
+
+        /**
+         Config the fabric block border
+         @method _fabricateBorder
+         @param {i_options} i_options
+         @return {object} object literal
+         **/
+        _fabricateBorder: function (i_options) {
+            var self = this;
+            var domPlayerData = self._getBlockPlayerData();
+            var border = self._findBorder(domPlayerData);
+            var color = border.length == 0 ? 'transparent' : '#' + BB.lib.decimalToHex($(border).attr('borderColor'));
+            return _.extend({
+                // borderColor: '#5d5d5d',
+                stroke: color,
+                strokeWidth: 1
+            }, i_options);
+        },
+
+        /**
+         Build the options injected into a newly created fabric object
+         @method _fabricateOptions
+         @param {Number} i_top
+         @param {Number} i_left
+         @param {Number} i_width
+         @param {Number} i_height
+         @param {Number} i_angle
+         @return {object} object literal
+         **/
+        _fabricateOptions: function (i_top, i_left, i_width, i_height, i_angle) {
+            var self = this;
+            var options = {
+                top: i_top,
+                left: i_left,
+                width: i_width,
+                height: i_height,
+                angle: i_angle,
+                fill: '#ececec',
+                hasRotatingPoint: false,
+                transparentCorners: false,
+                cornerColor: 'black',
+                cornerSize: 5,
+                lockRotation: true,
+                lineWidth: 1
+            };
+
+            return self._fabricateBorder(options);
+        },
+
+        /**
+         Fabricate color points to canvas
+         @method _fabricRect
+         @param {number} i_width
+         @param {number} i_height
+         @param {xml} i_domPlayerData
+         @return {object} r fabric js rectangular
+         **/
+        _fabricRect: function (i_width, i_height, i_domPlayerData) {
+            var self = this;
+            var options = self._fabricateOptions(0, 0, i_width, i_height, 0);
+            var r = new fabric.Rect(options);
+            r.setGradient('fill', {
+                x1: 0 - (i_width / 2),
+                y1: 0,
+                x2: (i_width / 2),
+                y2: 0,
+                colorStops: self._fabricColorPoints(i_domPlayerData)
+            });
+            return r;
+        },
+
+        /**
+         Convert the block into a fabric js compatible object, called externally on creation of block
+         @Override
+         @method fabricateBlock
+         **/
+        fabricateBlock: function (i_canvasScale, i_callback) {
             var self = this;
 
-            var snippet = '<input id="blockLengthHours" data-displayPrevious="false" data-min="0" data-max="23" data-skin="tron" data-width="60" data-height="60"  data-thickness=".2" type="text" class="knob" data-fgColor="gray">' +
-                '<input id="blockLengthMinutes" data-displayPrevious="false" data-min="0" data-max="59" data-skin="tron" data-width="60" data-height="60" data-thickness=".2" type="text" class="knob" data-fgColor="gray">' +
-                '<input id="blockLengthSeconds" data-displayPrevious="false" data-min="0" data-max="59" data-skin="tron" data-width="60" data-height="60"  data-thickness=".2" type="text" class="knob" data-fgColor="gray">';
+            var domPlayerData = self._getBlockPlayerData();
+            var layout = $(domPlayerData).find('Layout');
 
-            $(Elements.TIMELIME_CHANNEL_BLOCK_LENGTH).append(snippet);
+            var w = parseInt(layout.attr('width'));
+            var h = parseInt(layout.attr('height'));
+            var rec = self._fabricRect(w, h, domPlayerData);
 
-            $(Elements.CLASS_KNOB).knob({
-                /*change: function (value) {
-                 console.log("change : " + value);
-                 var caller = this['i'][0].id;
-                 },*/
-                release: function (value) {
-                    // console.log(this.$.attr('value'));
-                    // console.log("release : " + value + ' ' + this['i'][0].id);
-                    var caller = this['i'][0].id;
-                    BB.comBroker.fire(BB.EVENTS.BLOCK_LENGTH_CHANGING, this, caller, value);
-                },
-                /*cancel: function () {
-                 console.log("cancel : ", this);
-                 },*/
-                draw: function () {
-                    if (this.$.data('skin') == 'tron') {
+            fabric.loadSVGFromString(self.m_blockSvg, function (objects, options) {
+                var groupSvg = fabric.util.groupSVGElements(objects, options);
 
-                        var a = this.angle(this.cv)  // Angle
-                            , sa = this.startAngle          // Previous start angle
-                            , sat = this.startAngle         // Start angle
-                            , ea                            // Previous end angle
-                            , eat = sat + a                 // End angle
-                            , r = 1;
+                var group = new fabric.Group([rec, groupSvg], {
+                    left: parseInt(layout.attr('x')),
+                    top: parseInt(layout.attr('y')),
+                    width: parseInt(layout.attr('width')),
+                    height: parseInt(layout.attr('height')),
+                    angle: parseInt(layout.attr('rotation')),
+                    hasRotatingPoint: false,
+                    stroke: 'transparent',
+                    cornerColor: 'black',
+                    cornerSize: 5,
+                    lockRotation: true,
+                    transparentCorners: false
+                });
 
-                        this.g.lineWidth = this.lineWidth;
-
-                        this.o.cursor
-                            && (sat = eat - 0.3)
-                        && (eat = eat + 0.3);
-
-                        if (this.o.displayPrevious) {
-                            ea = this.startAngle + this.angle(this.v);
-                            this.o.cursor
-                                && (sa = ea - 0.3)
-                            && (ea = ea + 0.3);
-                            this.g.beginPath();
-                            this.g.strokeStyle = this.pColor;
-                            this.g.arc(this.xy, this.xy, this.radius - this.lineWidth, sa, ea, false);
-                            this.g.stroke();
-                        }
-
-                        this.g.beginPath();
-                        this.g.strokeStyle = r ? this.o.fgColor : this.fgColor;
-                        this.g.arc(this.xy, this.xy, this.radius - this.lineWidth, sat, eat, false);
-                        this.g.stroke();
-
-                        this.g.lineWidth = 2;
-                        this.g.beginPath();
-                        this.g.strokeStyle = this.o.fgColor;
-                        this.g.arc(this.xy, this.xy, this.radius - this.lineWidth + 1 + this.lineWidth * 2 / 3, 0, 2 * Math.PI, false);
-                        this.g.stroke();
-
-                        return false;
-                    }
-                }
+                _.extend(self, group);
+                // push to garbage collector
+                group = undefined;
+                groupSvg = undefined;
+                rec = undefined;
+                self._fabricAlpha(domPlayerData);
+                self._fabricLock();
+                self['canvasScale'] = i_canvasScale;
+                i_callback();
             });
         },
 
@@ -274,8 +918,13 @@ define(['jquery', 'backbone', 'Knob'], function ($, Backbone, Knob) {
                 blockType: self.m_blockType,
                 blockName: self.m_blockName,
                 blockDescription: self.m_blockDescription,
-                blockIcon: self.m_blockIcon
-            }
+                blockIcon: self.m_blockIcon,
+                blockFontAwesome: self.m_blockFontAwesome,
+                blockAcronym: self.m_blockAcronym,
+                blockMinWidth: self.m_minSize.w,
+                blockMinHeight: self.m_minSize.h,
+                blockData: self._getBlockPlayerData()
+            };
             return data;
         },
 
@@ -286,24 +935,10 @@ define(['jquery', 'backbone', 'Knob'], function ($, Backbone, Knob) {
          @return none
          **/
         deleteBlock: function () {
+            /* semi-abstract, overridden, do not modify */
             var self = this;
             self._deleteBlock();
-        },
-
-        /**
-         Delete block is a private method that is always called regardless if instance has
-         been inherited or not. Used for releasing memory for garbage collector.
-         @method _deleteBlock
-         @return none
-         **/
-        _deleteBlock: function () {
-            var self = this;
-            jalapeno.removeBlockFromTimelineChannel(self.m_block_id);
-            BB.comBroker.stopListenWithNamespace(BB.EVENTS.BLOCK_ON_CHANNEL_SELECTED, self);
-            BB.comBroker.stopListenWithNamespace(BB.EVENTS.BLOCK_LENGTH_CHANGING, self);
         }
-
-
     });
 
     return Block;

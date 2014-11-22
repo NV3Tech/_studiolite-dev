@@ -4,7 +4,7 @@
  @constructor
  @return {Object} instantiated CampaignNameView
  **/
-define(['jquery', 'backbone'], function ($, Backbone) {
+define(['jquery', 'backbone', 'video'], function ($, Backbone, video) {
 
     BB.SERVICES.CAMPAIGN_NAME_SELECTOR_VIEW = 'CampaignNameSelectorView';
 

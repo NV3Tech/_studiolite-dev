@@ -16,43 +16,109 @@ define(['jquery', 'backbone', 'Block'], function ($, Backbone, Block) {
          @method initialize
          **/
         constructor: function (options) {
-            Block.prototype.constructor.call(this, options);
             var self = this;
-
             self.m_blockType = 3100;
-            self.m_blockName = model.getComponent(self.m_blockType).name;
-            self.m_blockDescription = model.getComponent(self.m_blockType).description;
-            self.m_playerData = undefined;
-            self.m_resourceID = undefined;
-
-            self.m_property.initSubPanel(Elements.BLOCK_VIDEO_COMMON_PROPERTIES);
-            self._wireUI();
+            _.extend(options, {blockType: self.m_blockType})
+            Block.prototype.constructor.call(this, options);
+            self._initSubPanel(Elements.BLOCK_VIDEO_COMMON_PROPERTIES);
+            self._listenAspectChange();
+            self._listenRewind();
+            self._listenVolumeChange();
+            self._initResourcesData();
         },
 
-        /**
-         Bind listener events to related UI elements
-         @method _wireUI
-         @return none
-         **/
-        _wireUI: function () {
-            var self = this;
 
-            $(Elements.VIDEO_ASPECT_RATIO).change(function (e) {
+        /**
+         Listen to changes in volume control
+         @method _listenVolumeChange
+         **/
+        _listenVolumeChange: function(){
+            var self = this;
+            self.m_inputVolumeHandler = function (e) {
                 if (!self.m_selected)
                     return;
-                self._onChange(e);
-            });
+                var volume = e.edata;
+                var domPlayerData = self._getBlockPlayerData();
+                var xSnippet = $(domPlayerData).find('Video');
+                $(xSnippet).attr('volume', volume);
+                self._setBlockPlayerData(domPlayerData, BB.CONSTS.NO_NOTIFICATION);
+            };
+            BB.comBroker.listen(BB.EVENTS.VIDEO_VOLUME_CHANGED, self.m_inputVolumeHandler);
         },
 
         /**
-         Populate the image's common properties panel
-         @method _loadCommonProperties
+         Set the instance resource data from msdb which includes resource_id (handle of a resource)
+         as well as the description of the resource and icon.
+         @method _initResourcesData
+         **/
+        _initResourcesData: function () {
+            var self = this;
+            var domPlayerData = self._getBlockPlayerData();
+            var xSnippet = $(domPlayerData).find('Resource');
+            self.m_resourceID = $(xSnippet).attr('hResource');
+            self.m_blockName = pepper.getResourceRecord(self.m_resourceID).resource_name;
+            self.m_blockDescription = pepper.getResourceName(self.m_resourceID);
+            var fileFormat = pepper.getResourceType(self.m_resourceID);
+            self.m_blockFontAwesome = BB.PepperHelper.getFontAwesome(fileFormat);
+        },
+
+        /**
+         Populate the common block properties panel, called from base class if exists
+         @method _loadBlockSpecificProps
          @return none
          **/
-        _loadCommonProperties: function () {
+        _loadBlockSpecificProps: function () {
             var self = this;
             self._populate();
-            this.m_property.viewSubPanel(Elements.BLOCK_VIDEO_COMMON_PROPERTIES);
+            this._viewSubPanel(Elements.BLOCK_VIDEO_COMMON_PROPERTIES);
+        },
+
+        /**
+         Update the video's properties title
+         @method override _updateTitle
+         @return none
+         **/
+        _updateTitle: function () {
+            var self = this;
+            $(Elements.SELECTED_CHANNEL_RESOURCE_NAME).text(self.m_blockDescription);
+        },
+
+        /**
+         When user changes aspect ratio checkbox
+         @method _listenAspectChange
+         @return none
+         **/
+        _listenAspectChange: function () {
+            var self = this;
+            self.m_inputAspectHandler = function (e) {
+                if (!self.m_selected)
+                    return;
+                var v = $(e.target).prop('checked') == true ? 1 : 0;
+                var domPlayerData = self._getBlockPlayerData();
+                var xSnippet = $(domPlayerData).find('AspectRatio');
+                $(xSnippet).attr('maintain', v);
+                self._setBlockPlayerData(domPlayerData, BB.CONSTS.NO_NOTIFICATION);
+            };
+            $(Elements.VIDEO_ASPECT_RATIO).on('change', self.m_inputAspectHandler);
+        },
+
+        /**
+         When user changes rewind checkbox
+         @method _listenRewind
+         @return none
+         **/
+        _listenRewind: function () {
+            var self = this;
+            self.m_inputRewind = function (e) {
+                if (!self.m_selected)
+                    return;
+                var v = $(e.target).prop('checked') == true ? 1 : 0;
+                var domPlayerData = self._getBlockPlayerData();
+                var xSnippet = $(domPlayerData).find('Video');
+                $(xSnippet).attr('autoRewind', v);
+                self._setBlockPlayerData(domPlayerData, BB.CONSTS.NO_NOTIFICATION);
+            };
+            $(Elements.VIDEO_AUTO_REWIND).on('change', self.m_inputRewind);
         },
 
         /**
@@ -62,110 +128,15 @@ define(['jquery', 'backbone', 'Block'], function ($, Backbone, Block) {
          **/
         _populate: function () {
             var self = this;
-
-            var recBlock = jalapeno.getCampaignTimelineChannelPlayerRecord(self.m_block_id);
-            var xml = recBlock['player_data'];
-            var x2js = BB.comBroker.getService('compX2JS');
-            var jPlayerData = x2js.xml_str2json(xml);
-
-            // update checkbox for respect content length
-            if ((jPlayerData)["Player"]["Data"]["Resource"]["AspectRatio"]) {
-                var state = jPlayerData["Player"]["Data"]["Resource"]["AspectRatio"]["_maintain"] == '1' ? 'on' : 'off';
-                $(Elements.VIDEO_ASPECT_RATIO + ' option[value="'+state+'"]').attr("selected", "selected");
-            } else {
-                $(Elements.VIDEO_ASPECT_RATIO + ' option[value="off"]').attr("selected", "selected");
-            }
-        },
-
-        /**
-         Set the icon (image) by the file type (i.e.: mp4/flv/m4v)
-         @method _setIcon
-         @param {string} i_fileFormat format of the file
-         @return none
-         **/
-        _setIcon: function (i_fileFormat) {
-            var self = this;
-            self.m_blockIcon = model.getIcon(i_fileFormat);
-        },
-
-        /**
-         Update the video's properties title
-         @method override _updateTitle
-         @return none
-         **/
-        _updateTitle:  function () {
-            var self = this;
-            $(Elements.SELECTED_CHANNEL_RESOURCE_NAME).text(self.m_blockDescription);
-        },
-
-        /**
-         When user changes aspect ratio checkbox we update msdb
-         @method _onChange
-         @param {event} e event from target input element
-         @return none
-         **/
-        _onChange: function (e) {
-            var self = this;
-            var state = $(Elements.VIDEO_ASPECT_RATIO + ' option:selected').val() == "on" ? 1 : 0;
-            var recBlock = jalapeno.getCampaignTimelineChannelPlayerRecord(self.m_block_id);
-            var xPlayerData = recBlock['player_data'];
-            var xmlDoc = $.parseXML(xPlayerData);
-            var xml = $(xmlDoc);
-            var aspectRatio = xml.find('AspectRatio');
-
-            // this is a new component so we need to add a boilerplate xml
-            if (aspectRatio.length == 0) {
-                // xPlayerData = self._getDefaultPlayerVideoData();
-                xPlayerData = model.getComponent(self.m_blockType).getDefaultPlayerData(self.m_resourceID);
-                xmlDoc = $.parseXML(xPlayerData);
-                xml = $(xmlDoc);
-                aspectRatio = xml.find('AspectRatio');
-                aspectRatio.attr('url', state);
-            } else {
-                aspectRatio.attr('maintain', state);
-            }
-
-            var xmlString = (new XMLSerializer()).serializeToString(xml[0]);
-            jalapeno.setCampaignTimelineChannelPlayerRecord(self.m_block_id, 'player_data', xmlString);
-        },
-
-
-        /**
-         Get block data in json object literal
-         @method getBlockData override
-         @return {object} object literal
-         entire block's data members
-         **/
-        getBlockData: function () {
-            var self = this;
-            var data = {
-                blockID: self.m_block_id,
-                blockType: self.m_blockType,
-                blockName: self.m_blockDescription,
-                blockDescription: self.m_blockName,
-                blockIcon: self.m_blockIcon
-            }
-            return data;
-        },
-
-        /**
-         Set the instance player_data from msdb which includes resource_id (handle of a resource)
-         as well as the description of the resource and icon. This function is called upon instantiation
-         and it is a special method which applies only to image/swf/video blocks as they hold a reference
-         to an external resource
-         @method setPlayerData
-         @param {string} i_playerData
-         @return {String} Unique clientId.
-         **/
-        setPlayerData: function (i_playerData) {
-            var self = this;
-
-            self.m_playerData = i_playerData;
-
-            self.m_resourceID = parseInt(self.m_playerData["Player"]["Data"]["Resource"]["_hResource"])
-            self.m_blockDescription = jalapeno.getResourceName(self.m_resourceID);
-            var fileFormat = jalapeno.getResourceType(self.m_resourceID);
-            self._setIcon(fileFormat);
+            var domPlayerData = self._getBlockPlayerData();
+            var xSnippet = $(domPlayerData).find('AspectRatio');
+            var xSnippetVideo = $(domPlayerData).find('Video');
+            var aspectRatio = xSnippet.attr('maintain') == '1' ? true : false;
+            var autoRewind = xSnippetVideo.attr('autoRewind') == '1' ? true : false;
+            var volume = parseFloat(xSnippetVideo.attr('volume')) * 100;
+            $(Elements.VIDEO_AUTO_REWIND).prop('checked', autoRewind);
+            $(Elements.VIDEO_ASPECT_RATIO).prop('checked', aspectRatio);
+            $(Elements.VIDEO_VOLUME_WRAP_SLIDER).val(volume);
         },
 
         /**
@@ -176,6 +147,19 @@ define(['jquery', 'backbone', 'Block'], function ($, Backbone, Block) {
         getResourceID: function () {
             var self = this;
             return self.m_resourceID;
+        },
+
+        /**
+         Delete this block
+         @method deleteBlock
+         @return none
+         **/
+        deleteBlock: function () {
+            var self = this;
+            $(Elements.VIDEO_AUTO_REWIND).off('change', self.m_inputRewind);
+            $(Elements.VIDEO_ASPECT_RATIO).off('change', self.m_inputAspectHandler);
+            BB.comBroker.stopListen(BB.EVENTS.VIDEO_VOLUME_CHANGED, self.m_inputVolumeHandler);
+            self._deleteBlock();
         }
     });
 

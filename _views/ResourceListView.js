@@ -5,30 +5,7 @@
  @constructor
  @return {Object} instantiated CompResourcesList
  **/
-define(['jquery', 'backbone'], function ($, Backbone) {
-
-    /**
-     Custom event fired when resource is removing from resources
-     @event REMOVING_RESOURCE
-     @param {This} caller
-     @param {Self} context caller
-     @param {Event} the removed resource_id
-     @static
-     @final
-     **/
-    BB.EVENTS.REMOVING_RESOURCE = 'REMOVING_RESOURCE';
-
-    /**
-     Custom event fired after a resource has been removed from resources
-     @event REMOVED_RESOURCE
-     @param {This} caller
-     @param {Self} context caller
-     @param {Event} the removed resource_id
-     @static
-     @final
-     **/
-    BB.EVENTS.REMOVED_RESOURCE = 'REMOVED_RESOURCE';
-
+define(['jquery', 'backbone', 'bootstrapfileinput'], function ($, Backbone, bootstrapfileinput) {
 
     var ResourceListView = BB.View.extend({
 
@@ -42,13 +19,12 @@ define(['jquery', 'backbone'], function ($, Backbone) {
             self.m_property = BB.comBroker.getService(BB.SERVICES['PROPERTIES_VIEW']);
             self.m_property.initPanel(Elements.RESOURCE_LIST_PROPERTIES);
             self._listenInputChange();
-            self._loadResourceList();
-            self._listenResourceSelected();
+            $('input[type=file]').bootstrapFileInput();
             self._listenRemoveResource();
-
             $(Elements.FILE_SELECTION).change(function (e) {
                 self._onFileSelected(e);
             });
+            self.render();
         },
 
         /**
@@ -59,43 +35,13 @@ define(['jquery', 'backbone'], function ($, Backbone) {
          **/
         _listenInputChange: function () {
             var self = this;
-            var onChange = _.debounce( function (e) {
+            var onChange = _.debounce(function (e) {
                 var text = $(e.target).val();
-                jalapeno.setResourceRecord(self.m_selected_resource_id, 'resource_name', text);
-                self._loadResourceList();
-                self._listenResourceSelected();
-            }, 500);
+                pepper.setResourceRecord(self.m_selected_resource_id, 'resource_name', text);
+                var elem = self.$el.find('[data-resource_id="' + self.m_selected_resource_id + '"]');
+                elem.find('span').text(text);
+            }, 333);
             $(Elements.SELECTED_LIB_RESOURCE_NAME).on("input", onChange);
-        },
-
-        /**
-         Populate the UI with all resources for the account (i.e.: videos, images, swfs).
-         @method _loadResourceList
-         @return none
-         **/
-        _loadResourceList: function () {
-            var self = this;
-            $(Elements.RESOURCE_LIB_LIST).empty();
-
-            var recResources = jalapeno.getResources();
-            $(recResources).each(function (i) {
-                // dont process deleted resources
-                if (recResources[i]['change_type'] == 3)
-                    return;
-
-                var size = (parseInt(recResources[i]['resource_bytes_total']) / 1000).toFixed(2);
-                var resourceDescription = 'size: ' + size + 'K dimenstion: ' + recResources[i]['resource_pixel_width'] + 'x' + recResources[i]['resource_pixel_height'];
-
-                var snippet = '<li class="' + BB.lib.unclass(Elements.CLASS_RESOURCES_LIST_ITEMS) + ' list-group-item" data-resource_id="' + recResources[i]['resource_id'] + '">' +
-                    '<a href="#">' +
-                    '<img src="' + model.getIcon(recResources[i]['resource_type']) + '">' +
-                    '<span>' + recResources[i]['resource_name'] + '</span>' +
-                    '<p>' + resourceDescription + '</p></a>' +
-                    '</a>' +
-                    '</li>';
-
-                $(Elements.RESOURCE_LIB_LIST).append($(snippet));
-            });
         },
 
         /**
@@ -105,17 +51,17 @@ define(['jquery', 'backbone'], function ($, Backbone) {
          **/
         _listenRemoveResource: function () {
             var self = this;
-            $(Elements.FILE_REMOVE).on('click',function (e) {
+            $(Elements.FILE_REMOVE).on('click', function (e) {
                 if (self.m_selected_resource_id == undefined)
                     return;
                 // remove a resource from resources, notify before so channel instances
                 // can remove corresponding blocks and after so channelList can refresh UI
-                BB.comBroker.fire(BB.EVENTS.REMOVING_RESOURCE,this,null,self.m_selected_resource_id);
-                jalapeno.removeResource(self.m_selected_resource_id);
-                jalapeno.removeBlocksWithResourceID(self.m_selected_resource_id);
-                self._loadResourceList();
+                BB.comBroker.fire(BB.EVENTS.REMOVING_RESOURCE, this, null, self.m_selected_resource_id);
+                pepper.removeResource(self.m_selected_resource_id);
+                pepper.removeBlocksWithResourceID(self.m_selected_resource_id);
+                self.render();
                 self._listenResourceSelected();
-                BB.comBroker.fire(BB.EVENTS.REMOVED_RESOURCE,this,null,self.m_selected_resource_id);
+                BB.comBroker.fire(BB.EVENTS.REMOVED_RESOURCE, this, null, self.m_selected_resource_id);
             });
         },
 
@@ -127,12 +73,12 @@ define(['jquery', 'backbone'], function ($, Backbone) {
             var self = this;
 
             $(Elements.CLASS_RESOURCES_LIST_ITEMS).off('click');
-            $(Elements.CLASS_RESOURCES_LIST_ITEMS).on('click',function (e) {
+            $(Elements.CLASS_RESOURCES_LIST_ITEMS).on('click', function (e) {
                 var resourceElem = $(e.target).closest('li');
                 self.m_selected_resource_id = $(resourceElem).data('resource_id');
                 $(Elements.CLASS_RESOURCES_LIST_ITEMS).removeClass('activated').find('a').removeClass('whiteFont');
                 $(resourceElem).addClass('activated').find('a').addClass('whiteFont');
-                var recResource = jalapeno.getResourceRecord(self.m_selected_resource_id);
+                var recResource = pepper.getResourceRecord(self.m_selected_resource_id);
                 $(Elements.SELECTED_LIB_RESOURCE_NAME).val(recResource['resource_name']);
                 self.m_property.viewPanel(Elements.RESOURCE_LIST_PROPERTIES);
                 return false;
@@ -146,10 +92,53 @@ define(['jquery', 'backbone'], function ($, Backbone) {
          **/
         _onFileSelected: function (e) {
             var self = this;
-            jalapeno.uploadResources('file');
-            self._loadResourceList();
+            pepper.uploadResources('file');
+            self.render();
             self._listenResourceSelected();
             self._listenRemoveResource();
+        },
+
+
+        /**
+         Populate the UI with all resources for the account (i.e.: videos, images, swfs).
+         @method render
+         @return none
+         **/
+        render: function () {
+            var self = this;
+            $(Elements.RESOURCE_LIB_LIST).empty();
+
+            var recResources = pepper.getResources();
+            $(recResources).each(function (i) {
+                // dont process deleted resources
+                if (recResources[i]['change_type'] == 3)
+                    return;
+                var size = (parseInt(recResources[i]['resource_bytes_total']) / 1000).toFixed(2);
+                var resourceDescription = 'size: ' + size + 'K dimenstion: ' + recResources[i]['resource_pixel_width'] + 'x' + recResources[i]['resource_pixel_height'];
+                var resourceFontAwesome = BB.PepperHelper.getFontAwesome(recResources[i]['resource_type'])
+                if (_.isUndefined(resourceFontAwesome)){
+                    bootbox.alert($(Elements.MSG_BOOTBOX_FILE_FORMAT_INVALID).text());
+                } else {
+                    var snippet = '<li class="' + BB.lib.unclass(Elements.CLASS_RESOURCES_LIST_ITEMS) + ' list-group-item" data-resource_id="' + recResources[i]['resource_id'] + '">' +
+                        '<a href="#">' +
+                        '<i class="fa ' + resourceFontAwesome + '"></i>'+
+                        '<span>' + recResources[i]['resource_name'] + '</span>' +
+                        '<p>' + '' + '</p></a>' +
+                        '</a>' +
+                        '</li>';
+
+                    $(Elements.RESOURCE_LIB_LIST).append($(snippet));
+                }
+            });
+            self._listenResourceSelected();
+        },
+
+        /**
+         Unrender, future support
+         @method unrender
+         **/
+        unrender: function(){
+            var self = this;
         }
     });
 

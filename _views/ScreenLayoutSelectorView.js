@@ -17,6 +17,7 @@ define(['jquery', 'backbone', 'StackView', 'ScreenTemplateFactory'], function ($
         initialize: function () {
             var self = this;
             self.m_screens = [];
+            self.m_direction = 'left';
 
             self.listenTo(self.options.stackView, BB.EVENTS.SELECTED_STACK_VIEW, function (e) {
                 if (e == self) {
@@ -27,7 +28,12 @@ define(['jquery', 'backbone', 'StackView', 'ScreenTemplateFactory'], function ($
             $(this.el).find(Elements.PREVIOUS).on('click', function (e) {
                 if (self.options.from == null)
                     return;
-                self.options.stackView.slideToPage(self.options.from, 'left');
+                if (self.m_direction == 'left'){
+                    self.options.stackView.slideToPage(self.options.from, 'left');
+                } else {
+                    self.options.stackView.slideToPage(self.options.to, 'right');
+                }
+
                 return false;
             });
         },
@@ -67,24 +73,25 @@ define(['jquery', 'backbone', 'StackView', 'ScreenTemplateFactory'], function ($
 
                     var screenTemplate = new ScreenTemplateFactory({
                         i_screenTemplateData: screenTemplateData,
-                        i_type: BB.CONSTS.ENTIRE_SELECTABLE,
+                        i_selfDestruct: true,
                         i_owner: self
                     });
                     var snippet = screenTemplate.create();
                     $(Elements.SCREEN_LAYOUT_LIST).append($(snippet));
-                    screenTemplate.activate();
+                    screenTemplate.selectableFrame();
                     self.m_screens.push(screenTemplate);
                 }
             });
         },
 
         /**
-         Hide previous UI button so we can't go back
-         @method hidePreviousButton
+         Slide back to specified direction to / from
+         @method slideBackDirection
+         @param {String} i_direction
          **/
-        hidePreviousButton: function(){
+        slideBackDirection: function(i_direction){
             var self = this;
-            self.$el.find(Elements.PREVIOUS).hide();
+            self.m_direction = i_direction;
         }
     });
 

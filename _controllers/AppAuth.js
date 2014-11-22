@@ -17,12 +17,13 @@ define(['jquery', 'backbone'], function ($, Backbone) {
          **/
         initialize: function () {
             this.authenticated = false;
-            this.AUTH_USER_PASS = 0
-            this.AUTH_COOKIE = 1
+            this.AUTH_USER_PASS = 0;
+            this.AUTH_COOKIE = 1;
+            this.AUTH_PARAMS = 2;
         },
 
         /**
-         Initiate user authentication against the Jalapeno db user credentials
+         Initiate user authentication against the Pepper db user credentials
          @method authenticate
          @param {String} i_user
          @param {String} i_pass
@@ -35,19 +36,45 @@ define(['jquery', 'backbone'], function ($, Backbone) {
         },
 
         /**
-         Load user credentials from cookie if exists, else load from form data
+         Check if user / pass were passed in via params
+         @method _loadPassedCredentials
+         @return {Object} user and pass if passed in or undefined if none
+         **/
+        _loadPassedCredentials: function () {
+            var credentials = BB.lib.getURLParameter('param');
+            if (credentials == 'null')
+                return undefined;
+            credentials = $.base64.decode(credentials);
+            var re = /user=(.*),pass=(.*)/;
+            var match = re.exec(credentials);
+            return {
+                user: match[1],
+                pass: match[2]
+            }
+        },
+
+        /**
+         Load user credentials from param or cookie or form data
          @method _loadCredentials
          @param {String} i_user
          @param {String} i_pass
          **/
         _loadCredentials: function (i_user, i_pass) {
             var self = this;
-            var cookie = $.cookie('signagestudioweblite') == undefined ? undefined : $.cookie('signagestudioweblite').split(' ')[0];
-            if (cookie) {
-                var credentials = self._breakCookie(cookie);
-                self._authServer(credentials.user, credentials.pass, this.AUTH_COOKIE);
+
+            var passedCredentials = self._loadPassedCredentials();
+            var cookieCredentials = $.cookie('signagestudioweblite') == undefined ? undefined : $.cookie('signagestudioweblite').split(' ')[0];
+
+            if (passedCredentials){
+                self._authServer(passedCredentials.user, passedCredentials.pass, self.AUTH_PARAMS);
+
+            } else if (cookieCredentials) {
+                var credentials = self._breakCookie(cookieCredentials);
+                self._authServer(credentials.user, credentials.pass, self.AUTH_COOKIE);
+
             } else if (i_user.length > 2 && i_pass.length > 2) {
-                self._authServer(i_user, i_pass, this.AUTH_USER_PASS);
+                self._authServer(i_user, i_pass, self.AUTH_USER_PASS);
+
             } else {
                 BB.comBroker.getService(BB.SERVICES['LAYOUT_ROUTER']).navigate('unauthenticated', {trigger: true});
             }
@@ -62,7 +89,7 @@ define(['jquery', 'backbone'], function ($, Backbone) {
          **/
         _authServer: function (i_user, i_pass, i_authMode) {
             var self = this;
-            BB.Jalapeno.dbConnect(i_user, i_pass, function (i_status) {
+            BB.Pepper.dbConnect(i_user, i_pass, function (i_status) {
                 if (i_status.status) {
                     self._authPassed(i_user, i_pass, i_status, i_authMode);
                 } else {
@@ -91,7 +118,7 @@ define(['jquery', 'backbone'], function ($, Backbone) {
                 // Pro Account (not a Lite account) so limited access
 
                 // if module was not loaded yet wait to be notified from when it does
-                var navigationView = BB.comBroker.listen(BB.SERVICES['NAVIGATION_VIEW']);
+                var navigationView = BB.comBroker.getService(BB.SERVICES['NAVIGATION_VIEW']);
                 if (_.isUndefined(navigationView)) {
                     BB.comBroker.listen(BB.EVENTS.SERVICE_REGISTERED, function (e) {
                         if (e.edata.name == BB.SERVICES['NAVIGATION_VIEW']) {
@@ -128,11 +155,10 @@ define(['jquery', 'backbone'], function ($, Backbone) {
             // let user know authentication failed
             if (i_status.error == "not a studioLite account") {
                 bootbox.dialog({
-                    message: "You must login with a StudioLite account and not a Pro account",
-                    title: "keep in mind...",
+                    message: $(Elements.MSG_BOOTBOX_STUDIO_LITE_ACC).text(),
                     buttons: {
                         info: {
-                            label: "OK",
+                            label: $(Elements.MSG_BOOTBOX_OK).text(),
                             className: "btn-primary",
                             callback: function () {
                             }
